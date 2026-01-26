@@ -7,7 +7,7 @@ Stop paying $30/month for AI assistant subscriptions. This project gives you an 
 ## What You Get
 
 - **Always-on AI agent** - Runs 24/7 on GCP's free tier (e2-micro VM)
-- **Gemini 2.0 Flash** - Google's fast multimodal model, free for personal use
+- **Gemini 3 Flash** - Google's latest multimodal model, free tier available
 - **Email interface** - Send commands from anywhere, no app needed
 - **Smart calendar management** - Natural language scheduling with auto-routing
 - **Extensible foundation** - Add your own tools and capabilities

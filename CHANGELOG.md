@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Orchestrator with Gemini 2.0 Flash integration for natural language processing
+- Orchestrator with Gemini 3 Flash integration for natural language processing
+- Configurable model selection via GEMINI_MODEL environment variable
 - Email poller for IMAP-based command input with sender filtering
 - Google Calendar client with full CRUD operations
 - Dynamic calendar routing and auto-creation

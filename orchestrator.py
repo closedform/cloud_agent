@@ -39,7 +39,7 @@ DEFAULT_CALENDAR = "brandon" if "brandon" in CALENDARS else "primary"
 
 # Configure GenAI Client (New SDK)
 client = genai.Client(api_key=GEMINI_API_KEY)
-MODEL_ID = 'gemini-2.0-flash-lite-preview-02-05'
+MODEL_ID = os.getenv("GEMINI_MODEL", "gemini-3-flash")
 
 SYSTEM_PROMPT = f"""
 You are an intelligent calendar assistant. 

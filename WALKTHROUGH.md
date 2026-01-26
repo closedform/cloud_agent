@@ -4,7 +4,7 @@
 We have successfully built and packaged `gcp_agent`, a fully autonomous assistant designed to run permanently on Google Cloud's "Always Free" tier. It manages your Calendar and accepts tasks via Email (IMAP).
 
 ## Key Components
-- **Orchestrator (`orchestrator.py`)**: The brain. Uses Gemini 2.0 Flash to "Think" about inputs and decide which tools to call.
+- **Orchestrator (`orchestrator.py`)**: The brain. Uses Gemini 3 Flash to "Think" about inputs and decide which tools to call.
 - **Email Poller (`email_poller.py`)**: Watches your inbox for messages from your allowlisted email.
 - **Calendar Tools (`calendar_client.py`)**: Reuses your robust `calendar_tool` implementation for event management.
 - **Unified Deployment (`main.py`)**: A single entry point that runs the email poller service.
