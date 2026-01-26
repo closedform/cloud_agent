@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Environment Variables & Secrets (CRITICAL)
+.env
+production.env
+!.env.example
+
+# Google Credentials (CRITICAL)
+credentials.json
+token.json
+client_secret_*.json
+
+# Data
+inputs/
+processed/
+*.zip

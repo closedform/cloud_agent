@@ -1,0 +1,93 @@
+# Cloud Agent
+
+**Your own AI agent running 24/7 in the cloud. For free.**
+
+Stop paying $30/month for AI assistant subscriptions. This project gives you an autonomous agent that runs on Google's free infrastructure forever.
+
+## What You Get
+
+- **Always-on AI agent** - Runs 24/7 on GCP's free tier (e2-micro VM)
+- **Gemini 2.0 Flash** - Google's fast multimodal model, free for personal use
+- **Email interface** - Send commands from anywhere, no app needed
+- **Smart calendar management** - Natural language scheduling with auto-routing
+- **Extensible foundation** - Add your own tools and capabilities
+
+**Total monthly cost: $0.00**
+
+## How It Works
+
+```
+You ──email──> Gmail ──IMAP──> Agent ──Gemini──> Google Calendar
+                                 │
+                           (your VM, always on)
+```
+
+Email the agent: *"Schedule dentist appointment next Tuesday at 2pm"*
+
+The agent parses it with Gemini, creates the event, and routes it to the right calendar. It handles recurring events, multiple calendars, and creates new ones on demand.
+
+## Quick Start
+
+### 1. Clone and configure
+
+```bash
+git clone https://github.com/closedform/cloud_agent.git
+cd cloud_agent
+
+# Install uv (fast Python package manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install dependencies
+uv sync
+
+# Configure your API keys
+cp .env.example .env
+# Edit .env with your Gemini API key and Gmail app password
+```
+
+### 2. Get your credentials
+
+- **Gemini API Key**: Free from [aistudio.google.com](https://aistudio.google.com)
+- **Gmail App Password**: From [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+- **Google Calendar**: Run `uv run python calendar_client.py --auth` to authorize
+
+### 3. Run locally (to test)
+
+```bash
+# Terminal 1: The brain (processes tasks)
+uv run python orchestrator.py
+
+# Terminal 2: The ears (listens for emails)
+uv run python email_poller.py
+```
+
+### 4. Deploy to the cloud
+
+Follow [DEPLOYMENT.md](DEPLOYMENT.md) to set up your free GCP VM. Takes about 15 minutes.
+
+## Project Structure
+
+```
+orchestrator.py    # Brain: Gemini-powered task processor
+email_poller.py    # Ears: IMAP listener for commands
+calendar_client.py # Hands: Google Calendar operations
+```
+
+## Extending the Agent
+
+This is a starting point. The architecture is intentionally simple - add new "tools" by:
+
+1. Writing a new client (like `calendar_client.py`)
+2. Adding tool calls to the orchestrator
+3. Updating the system prompt
+
+Ideas: task management, home automation, expense tracking, flight monitoring.
+
+## Documentation
+
+- [TUTORIAL.md](TUTORIAL.md) - Architecture deep-dive and philosophy
+- [DEPLOYMENT.md](DEPLOYMENT.md) - Step-by-step cloud deployment guide
+
+## License
+
+MIT
