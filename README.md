@@ -70,6 +70,17 @@ Subject: Calendar: me@example.com
 Body: What do I have this week?
 ```
 
+### Status Check
+
+Subject: `Status: <reply-email>`
+
+```
+Subject: Status: me@example.com
+Body: (anything or empty)
+```
+
+Returns agent configuration, API status, and recent task history.
+
 ## Quick Start
 
 ```bash

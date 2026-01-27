@@ -78,6 +78,7 @@ def parse_intent(subject: str) -> tuple[str, str]:
     Returns: (intent_type, metadata)
     - "research", email_address
     - "calendar_query", email_address
+    - "status", email_address
     - "schedule", ""
     - "unknown", ""
     """
@@ -89,6 +90,9 @@ def parse_intent(subject: str) -> tuple[str, str]:
     elif subject_lower.startswith("calendar:"):
         reply_to = subject[9:].strip()
         return "calendar_query", reply_to
+    elif subject_lower.startswith("status:"):
+        reply_to = subject[7:].strip()
+        return "status", reply_to
     elif any(kw in subject_lower for kw in ["schedule", "appointment"]):
         return "schedule", ""
     else:

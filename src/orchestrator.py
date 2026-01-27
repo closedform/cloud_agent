@@ -232,6 +232,95 @@ Provide a clear, helpful answer. Include relevant dates and times."""
         )
 
 
+def handle_status(task: dict):
+    """Handle status request - report agent configuration and API status."""
+    reply_to = task.get("reply_to", "")
+
+    if not reply_to:
+        print("  No reply_to address")
+        return
+
+    print(f"  Generating status report...")
+
+    status_lines = []
+    status_lines.append("=== Cloud Agent Status ===\n")
+
+    # Model configuration
+    status_lines.append("CONFIGURATION")
+    status_lines.append(f"  Main model: {GEMINI_MODEL}")
+    status_lines.append(f"  Research model: {GEMINI_RESEARCH_MODEL}")
+    status_lines.append(f"  Calendars loaded: {len(CALENDARS)}")
+    status_lines.append(f"  Calendar names: {', '.join(CALENDARS.keys())}")
+    status_lines.append("")
+
+    # Test API and get rate limit info
+    status_lines.append("API STATUS")
+    try:
+        # Make a minimal test request
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=["Say 'ok' and nothing else."]
+        )
+        status_lines.append(f"  {GEMINI_MODEL}: OK")
+
+        # Try to get usage metadata if available
+        if hasattr(response, 'usage_metadata') and response.usage_metadata:
+            um = response.usage_metadata
+            status_lines.append(f"  Test request tokens: {getattr(um, 'total_token_count', 'N/A')}")
+
+    except Exception as e:
+        status_lines.append(f"  {GEMINI_MODEL}: ERROR - {e}")
+
+    try:
+        response = client.models.generate_content(
+            model=GEMINI_RESEARCH_MODEL,
+            contents=["Say 'ok' and nothing else."]
+        )
+        status_lines.append(f"  {GEMINI_RESEARCH_MODEL}: OK")
+    except Exception as e:
+        status_lines.append(f"  {GEMINI_RESEARCH_MODEL}: ERROR - {e}")
+
+    status_lines.append("")
+
+    # Recent processed tasks
+    status_lines.append("RECENT TASKS (last 10)")
+    try:
+        processed_files = sorted(PROCESSED_DIR.glob("task_*.json"), reverse=True)[:10]
+        if processed_files:
+            for f in processed_files:
+                with open(f, "r") as fp:
+                    t = json.load(fp)
+                status_lines.append(f"  [{t.get('intent')}] {t.get('created_at', 'unknown')}")
+        else:
+            status_lines.append("  No processed tasks yet")
+    except Exception as e:
+        status_lines.append(f"  Error reading tasks: {e}")
+
+    status_lines.append("")
+
+    # Pending tasks
+    status_lines.append("PENDING TASKS")
+    try:
+        pending_files = list(INPUT_DIR.glob("task_*.json"))
+        status_lines.append(f"  Count: {len(pending_files)}")
+    except Exception as e:
+        status_lines.append(f"  Error: {e}")
+
+    status_lines.append("")
+    status_lines.append("---")
+    status_lines.append("View rate limits: https://aistudio.google.com")
+    status_lines.append("Free tier: 15 RPM / 1500 RPD (Flash), 5 RPM / 500 RPD (Pro)")
+
+    status_report = "\n".join(status_lines)
+
+    send_email(
+        to_address=reply_to,
+        subject="Cloud Agent Status Report",
+        body=status_report
+    )
+    print(f"  Status sent to {reply_to}")
+
+
 # =============================================================================
 # HELPERS
 # =============================================================================
@@ -318,6 +407,8 @@ def process_task(task_file: Path):
             handle_research(task)
         elif intent == "calendar_query":
             handle_calendar_query(task)
+        elif intent == "status":
+            handle_status(task)
         else:
             print(f"  Unknown intent: {intent}")
 
