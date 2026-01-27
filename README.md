@@ -2,7 +2,7 @@
 
 **Your own AI agent running 24/7 in the cloud. For free.**
 
-Stop paying $30/month for AI assistant subscriptions. This project gives you an autonomous agent that runs on Google's free infrastructure forever.
+An autonomous agent that runs on Google's free infrastructure forever.
 
 ## What You Get
 
