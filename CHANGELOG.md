@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Research feature: email with subject "research: <query>" to get AI-powered research sent back via email
+- SMTP email sending capability for agent responses
+
 ## [0.1.0] - 2025-01-26
 
 ### Added

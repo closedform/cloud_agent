@@ -26,6 +26,12 @@ Email the agent: *"Schedule dentist appointment next Tuesday at 2pm"*
 
 The agent parses it with Gemini, creates the event, and routes it to the right calendar. It handles recurring events, multiple calendars, and creates new ones on demand.
 
+### Research Mode
+
+Email with subject `research: <your question>` to get AI-powered research delivered back to your inbox.
+
+Example: `research: what are the best practices for Python async programming`
+
 ## Quick Start
 
 ### 1. Clone and configure
