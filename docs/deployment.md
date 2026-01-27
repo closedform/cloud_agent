@@ -53,24 +53,18 @@ source $HOME/.local/bin/env
 mkdir -p ~/projects/assistant
 ```
 
-## 4. Upload Your Code
-Since you have the code locally, the easiest way to transfer it without setting up Git repos is using the **Upload File** button in the SSH window (Gear icon > Upload file).
-
-**Files to Upload:**
-1.  Upload the entire `gcp_agent` folder (or zip it locally first: `zip -r agent.zip gcp_agent`).
-2.  Unzip it on the server: `unzip agent.zip`.
-
-## 5. Setup & Run (The Fix)
-If you uploaded a zip from a Mac/Windows machine, the virtual environment will be broken on Linux. Fix it like this:
+## 4. Clone the Repository
 
 ```bash
-cd ~/gcp_agent
-
-# 1. Clear the old environment and rebuild it for Linux
-rm -rf .venv
+git clone https://github.com/closedform/cloud_agent.git
+cd cloud_agent
 uv sync
+```
 
-# 2. Run the agent (We need two processes: Brain & Ears)
+## 5. Run the Agent
+
+```bash
+# Install tmux for persistent sessions
 sudo apt install -y tmux
 
 # Start a new persistent session
@@ -81,16 +75,28 @@ tmux new -s agent
 1.  **Split the screen**: Press `Ctrl+B`, release, then `%`. (You now have a left and right pane).
 2.  **Left Pane (Brain)**:
     ```bash
-    uv run python orchestrator.py
+    uv run python -m src.orchestrator
     ```
 3.  **Right Pane (Ears)**:
     -   Press `Ctrl+B`, release, then `Right Arrow` to switch.
     -   Run the poller:
     ```bash
-    uv run python email_poller.py
+    uv run python -m src.poller
     ```
 
 **To leave it running**: Press `Ctrl+B`, release, then `D`. It will keep running in the cloud forever.
+
+## Updating
+
+To pull updates from GitHub:
+
+```bash
+cd ~/cloud_agent
+git pull
+uv sync
+tmux kill-session -t agent
+tmux new -s agent -d 'uv run python -m src.orchestrator' \; split-window -h 'uv run python -m src.poller'
+```
 
 ## 6. Configuration (.env)
 1.  **Get an App Password**: Go to [Google Account Security](https://myaccount.google.com/security) > 2-Step Verification > App Passwords. Create one named "PersonalAgent".

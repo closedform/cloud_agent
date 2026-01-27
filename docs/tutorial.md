@@ -17,7 +17,7 @@ Google Cloud Platform (GCP) has an "Always Free" tier that includes an **e2-micr
 The topology is simple. We have a central "Brain" (the Orchestrator) that acts as a hub, and a few "Spokes" for input and output.
 
 ### 1. The Orchestrator
-The core logic is a simple event loop (`orchestrator.py`). It watches an input folder. That's it. It’s not fancy. It sits there, sleeping, waiting for a file to appear.
+The core logic is a simple event loop (`src/orchestrator.py`). It watches an input folder. That's it. It's not fancy. It sits there, sleeping, waiting for a file to appear.
 
 When you drop a file in—maybe a screenshot of a doctor's appointment or a forwarded email from your airline—the Orchestrator wakes up. It sends that payload to **Gemini Flash**.
 
@@ -26,12 +26,12 @@ Why Flash? Because it’s fast, it’s cheap (free, actually, for low volume), a
 ### 2. The Input Manifold (Email)
 We need a way to talk to the bot without SSH-ing into a server. The oldest, most reliable messaging protocol is IMAP.
 
-We built a simple poller (`email_poller.py`) that watches a dedicated Gmail account. It securely filters for emails *only* from you (security first, folks). When it sees one, it rips out the body text and any attachments and dumps them into the Orchestrator's lap.
+We built a simple poller (`src/poller.py`) that watches a dedicated Gmail account. It securely filters for emails *only* from you (security first, folks). When it sees one, it rips out the body text and any attachments and dumps them into the Orchestrator's lap.
 
 This decouples the "hearing" from the "thinking." Passively listening to email is cheap. Thinking is expensive. We only think when we have to.
 
 ### 3. The Execution Layer
-Finally, the agent needs hands. We wrote a `calendar_client.py` wrapper around the Google Calendar API.
+Finally, the agent needs hands. We wrote a `src/clients/calendar.py` wrapper around the Google Calendar API.
 
 Crucially, we added **dynamic routing**. The agent asks Google: "What calendars do we have?"
 
@@ -140,13 +140,13 @@ tmux new -s agent
 1.  **Split the screen**: Press `Ctrl+B`, release, then `%`. (You now have a left and right pane).
 2.  **Left Pane (Brain)**:
     ```bash
-    uv run python orchestrator.py
+    uv run python -m src.orchestrator
     ```
 3.  **Right Pane (Ears)**:
     -   Press `Ctrl+B`, release, then `Right Arrow` to switch.
     -   Run the poller:
     ```bash
-    uv run python email_poller.py
+    uv run python -m src.poller
     ```
 
 **To leave it running**: Press `Ctrl+B`, release, then `D`. It will keep running in the cloud forever.
