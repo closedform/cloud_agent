@@ -1,48 +1,123 @@
+"""Email poller - the ears of the agent.
+
+Watches Gmail for incoming commands, parses intent, and drops task files
+for the orchestrator to process.
+"""
+
 import os
 import time
+import json
 import email
 import email.utils
 import imaplib
-import smtplib
 from email.header import decode_header
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
-from src.clients import calendar as calendar_client
 
 load_dotenv()
 
 # Configuration
 EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
-# Security: Allow list (comma-separated in .env)
 allowed_senders_env = os.getenv("ALLOWED_SENDERS", "")
 ALLOWED_SENDERS = [s.strip() for s in allowed_senders_env.split(",") if s.strip()]
-# Polling Interval (seconds), default to 60
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "60"))
 
 IMAP_SERVER = "imap.gmail.com"
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
 INPUT_DIR = Path("inputs")
 
-# Gemini client for research
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash")
-gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 def connect_imap():
     mail = imaplib.IMAP4_SSL(IMAP_SERVER)
     mail.login(EMAIL_USER, EMAIL_PASS)
     return mail
 
-def clean_filename(filename):
+
+def clean_filename(filename: str) -> str:
     return "".join([c for c in filename if c.isalpha() or c.isdigit() or c in "._-"])
 
-def process_email():
+
+def get_email_body(msg) -> str:
+    """Extract plain text body from email message."""
+    body = ""
+    if msg.is_multipart():
+        for part in msg.walk():
+            content_type = part.get_content_type()
+            content_disposition = str(part.get("Content-Disposition"))
+            if content_type == "text/plain" and "attachment" not in content_disposition:
+                body = part.get_payload(decode=True).decode()
+                break
+    else:
+        body = msg.get_payload(decode=True).decode()
+    return body
+
+
+def save_attachments(msg, task_id: str) -> list:
+    """Save email attachments and return list of filenames."""
+    attachments = []
+    for part in msg.walk():
+        if part.get_content_maintype() == 'multipart':
+            continue
+        if part.get('Content-Disposition') is None:
+            continue
+
+        filename = part.get_filename()
+        if filename:
+            safe_name = f"{task_id}_{clean_filename(filename)}"
+            filepath = INPUT_DIR / safe_name
+            with open(filepath, "wb") as f:
+                f.write(part.get_payload(decode=True))
+            attachments.append(safe_name)
+            print(f"  Saved attachment: {safe_name}")
+    return attachments
+
+
+def parse_intent(subject: str) -> tuple[str, str]:
+    """Parse subject line to determine intent and extract metadata.
+
+    Returns: (intent_type, metadata)
+    - "research", email_address
+    - "calendar_query", email_address
+    - "schedule", ""
+    - "unknown", ""
+    """
+    subject_lower = subject.lower()
+
+    if subject_lower.startswith("research:"):
+        reply_to = subject[9:].strip()
+        return "research", reply_to
+    elif subject_lower.startswith("calendar:"):
+        reply_to = subject[9:].strip()
+        return "calendar_query", reply_to
+    elif any(kw in subject_lower for kw in ["schedule", "appointment"]):
+        return "schedule", ""
+    else:
+        return "unknown", ""
+
+
+def create_task(intent: str, body: str, subject: str, reply_to: str, attachments: list) -> str:
+    """Create a task file in the inputs directory."""
+    task_id = str(int(time.time() * 1000))
+
+    task = {
+        "id": task_id,
+        "intent": intent,
+        "subject": subject,
+        "body": body,
+        "reply_to": reply_to,
+        "attachments": attachments,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S")
+    }
+
+    task_file = INPUT_DIR / f"task_{task_id}.json"
+    with open(task_file, "w") as f:
+        json.dump(task, f, indent=2)
+
+    return task_id
+
+
+def process_emails():
+    """Check for new emails and create tasks."""
     if not ALLOWED_SENDERS:
         print("Warning: No ALLOWED_SENDERS configured.")
         return
@@ -51,17 +126,15 @@ def process_email():
         mail = connect_imap()
         mail.select("inbox")
 
-        # Check each allowed sender
         for sender in ALLOWED_SENDERS:
-            # Search for UNSEEN emails from this specific sender
             status, messages = mail.search(None, f'(UNSEEN FROM "{sender}")')
-            
             email_ids = messages[0].split()
+
             if not email_ids:
                 continue
 
             print(f"Found {len(email_ids)} new emails from {sender}...")
-            
+
             for e_id in email_ids:
                 status, msg_data = mail.fetch(e_id, "(RFC822)")
                 for response_part in msg_data:
@@ -70,24 +143,28 @@ def process_email():
                         subject = decode_header(msg["Subject"])[0][0]
                         if isinstance(subject, bytes):
                             subject = subject.decode()
-                        
-                        subject_lower = subject.lower()
-                        print(f"Received Email: {subject}")
 
-                        # Routing Logic
-                        if subject_lower.startswith("research:"):
-                            print(f"  -> Routing to Research Agent")
-                            reply_to = subject[9:].strip()  # Email to reply to
-                            process_research_email(msg, reply_to)
-                        elif subject_lower.startswith("calendar:"):
-                            print(f"  -> Routing to Calendar Query Agent")
-                            reply_to = subject[9:].strip()  # Email to reply to
-                            process_calendar_query(msg, reply_to)
-                        elif any(keyword in subject_lower for keyword in ["schedule", "appointment"]):
-                            print(f"  -> Routing to Calendar Agent")
-                            process_calendar_email(msg, subject)
-                        else:
-                            print(f"  -> Subject does not match known intents. Skipping.")
+                        print(f"Received: {subject}")
+
+                        # Parse intent
+                        intent, reply_to = parse_intent(subject)
+
+                        if intent == "unknown":
+                            print(f"  -> Unknown intent, skipping")
+                            continue
+
+                        # Get body
+                        body = get_email_body(msg)
+
+                        # Generate task ID for attachments
+                        task_id = str(int(time.time() * 1000))
+
+                        # Save attachments if any
+                        attachments = save_attachments(msg, task_id)
+
+                        # Create task file
+                        create_task(intent, body, subject, reply_to, attachments)
+                        print(f"  -> Created task: {intent}")
 
     except Exception as e:
         print(f"Email Error: {e}")
@@ -98,205 +175,15 @@ def process_email():
         except:
             pass
 
-def process_calendar_email(msg, subject):
-    # 1. Save Body as Text File
-    body = ""
-    if msg.is_multipart():
-        for part in msg.walk():
-            content_type = part.get_content_type()
-            content_disposition = str(part.get("Content-Disposition"))
-            
-            if content_type == "text/plain" and "attachment" not in content_disposition:
-                body = part.get_payload(decode=True).decode()
-    else:
-        body = msg.get_payload(decode=True).decode()
-
-    if body.strip():
-        # Create a text file input
-        timestamp = int(time.time())
-        txt_filename = f"email_{timestamp}.txt"
-        with open(INPUT_DIR / txt_filename, "w") as f:
-            f.write(f"Context from Email Subject: {subject}\n\n{body}")
-        print(f"Saved body to {txt_filename}")
-
-    # 2. Save Attachments
-    for part in msg.walk():
-        if part.get_content_maintype() == 'multipart':
-            continue
-        if part.get('Content-Disposition') is None:
-            continue
-            
-        filename = part.get_filename()
-        if filename:
-            filepath = INPUT_DIR / clean_filename(filename)
-            with open(filepath, "wb") as f:
-                f.write(part.get_payload(decode=True))
-            print(f"Saved attachment to {filepath.name}")
-
-def send_email(to_address, subject, body):
-    """Send an email via SMTP."""
-    try:
-        msg = MIMEMultipart()
-        msg["From"] = EMAIL_USER
-        msg["To"] = to_address
-        msg["Subject"] = subject
-        msg.attach(MIMEText(body, "plain"))
-
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls()
-            server.login(EMAIL_USER, EMAIL_PASS)
-            server.sendmail(EMAIL_USER, to_address, msg.as_string())
-
-        print(f"Email sent to {to_address}")
-        return True
-    except Exception as e:
-        print(f"Failed to send email: {e}")
-        return False
-
-def process_research_email(msg, reply_to):
-    """Research a topic using Gemini and email the response."""
-    if not gemini_client:
-        print("Error: GEMINI_API_KEY not configured")
-        return
-
-    # Get query from email body
-    query = ""
-    if msg.is_multipart():
-        for part in msg.walk():
-            content_type = part.get_content_type()
-            content_disposition = str(part.get("Content-Disposition"))
-            if content_type == "text/plain" and "attachment" not in content_disposition:
-                query = part.get_payload(decode=True).decode()
-                break
-    else:
-        query = msg.get_payload(decode=True).decode()
-
-    if not query.strip():
-        print("Error: No query in email body")
-        return
-
-    print(f"Researching: {query[:100]}...")
-
-    prompt = f"""You are a research assistant. Answer the following query thoroughly and concisely.
-
-Query: {query}
-
-Provide a well-structured response with key facts and insights."""
-
-    try:
-        response = gemini_client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=[prompt]
-        )
-
-        result = response.text
-        print(f"Research complete, sending response to {reply_to}")
-
-        # Use first line of query as subject (truncated)
-        subject_line = query.strip().split('\n')[0][:50]
-        send_email(
-            to_address=reply_to,
-            subject=f"Re: {subject_line}",
-            body=result
-        )
-    except Exception as e:
-        print(f"Research error: {e}")
-        send_email(
-            to_address=reply_to,
-            subject="Research Error",
-            body=f"Sorry, I encountered an error while researching: {e}"
-        )
-
-def process_calendar_query(msg, reply_to):
-    """Query calendar using Gemini and email the response."""
-    if not gemini_client:
-        print("Error: GEMINI_API_KEY not configured")
-        return
-
-    # Get query from email body
-    query = ""
-    if msg.is_multipart():
-        for part in msg.walk():
-            content_type = part.get_content_type()
-            content_disposition = str(part.get("Content-Disposition"))
-            if content_type == "text/plain" and "attachment" not in content_disposition:
-                query = part.get_payload(decode=True).decode()
-                break
-    else:
-        query = msg.get_payload(decode=True).decode()
-
-    if not query.strip():
-        print("Error: No query in email body")
-        return
-
-    print(f"Calendar query: {query[:100]}...")
-
-    # Fetch calendar events
-    try:
-        service = calendar_client.get_service()
-        calendars = calendar_client.get_calendar_map(service)
-        all_events = calendar_client.get_all_upcoming_events(service, max_results_per_calendar=20)
-
-        # Format events for context
-        events_context = f"Available calendars: {list(calendars.keys())}\n\n"
-        for cal_name, events in all_events.items():
-            events_context += f"\n=== {cal_name} ===\n"
-            for event in events:
-                events_context += f"- {event['summary']} | Start: {event['start']} | End: {event['end']}\n"
-                if event['description']:
-                    events_context += f"  Description: {event['description']}\n"
-
-        if not all_events:
-            events_context += "No upcoming events found in any calendar."
-
-    except Exception as e:
-        print(f"Error fetching calendar: {e}")
-        send_email(
-            to_address=reply_to,
-            subject="Calendar Query Error",
-            body=f"Sorry, I couldn't access the calendar: {e}"
-        )
-        return
-
-    prompt = f"""You are a calendar assistant. Answer the user's question based on the calendar data below.
-
-USER QUESTION: {query}
-
-CALENDAR DATA:
-{events_context}
-
-Provide a clear, helpful answer. If asking about a specific calendar, focus on that one. Include relevant dates and times."""
-
-    try:
-        response = gemini_client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=[prompt]
-        )
-
-        result = response.text
-        print(f"Calendar query complete, sending response to {reply_to}")
-
-        subject_line = query.strip().split('\n')[0][:50]
-        send_email(
-            to_address=reply_to,
-            subject=f"Re: {subject_line}",
-            body=result
-        )
-    except Exception as e:
-        print(f"Calendar query error: {e}")
-        send_email(
-            to_address=reply_to,
-            subject="Calendar Query Error",
-            body=f"Sorry, I encountered an error: {e}"
-        )
 
 def main():
-    print(f"Email Poller Started (Interval: {POLL_INTERVAL}s)...")
+    print(f"Poller started (interval: {POLL_INTERVAL}s)...")
     INPUT_DIR.mkdir(exist_ok=True)
-    
+
     while True:
-        process_email()
+        process_emails()
         time.sleep(POLL_INTERVAL)
+
 
 if __name__ == "__main__":
     main()

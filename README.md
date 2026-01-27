@@ -2,136 +2,150 @@
 
 **Your own AI agent running 24/7 in the cloud. For free.**
 
-An autonomous agent that runs on Google's free infrastructure forever.
+An autonomous agent that runs on Google's free infrastructure. It listens for commands via email, routes them to the right handler, and responds.
 
 ## What You Get
 
 - **Always-on AI agent** - Runs 24/7 on GCP's free tier (e2-micro VM)
-- **Gemini 3 Flash** - Google's latest multimodal model, free tier available
+- **Gemini 3 Flash** - Google's multimodal model, free tier available
 - **Email interface** - Send commands from anywhere, no app needed
-- **Smart calendar management** - Natural language scheduling with auto-routing
-- **Extensible foundation** - Add your own tools and capabilities
+- **Extensible architecture** - Add new capabilities easily
 
-**Total monthly cost: $0.00**
+**Total monthly cost: $0.00** (within free tier limits)
 
-## How It Works
+## Architecture
 
 ```
-You ──email──> Gmail ──IMAP──> Agent ──Gemini──> Google Calendar
-                                 │
-                           (your VM, always on)
+              (inbound)                              (outbound)
++------+    email    +-------+   IMAP   +---------+
+| You  | ---------> | Gmail | -------> | Poller  |
++------+            +-------+          +---------+
+   ^                                        |
+   |                                        | creates task files
+   |                                        v
+   |                                   +-------------+
+   |                                   | Orchestrator |
+   |                                   +-------------+
+   |                                        |
+   |         routes by intent:              |
+   |         - schedule    -> Calendar API  |
+   |         - research    -> Gemini -------+---> SMTP --> You
+   |         - calendar_query -> Gemini ----+
+   |                                        |
+   +----------------------------------------+
 ```
 
-Email the agent: *"Schedule dentist appointment next Tuesday at 2pm"*
+**Poller** (`src/poller.py`) - Watches Gmail, parses intent, drops task files
+**Orchestrator** (`src/orchestrator.py`) - Processes tasks, routes to handlers
+**Clients** (`src/clients/`) - Calendar, email, and future integrations
 
-The agent parses it with Gemini, creates the event, and routes it to the right calendar. It handles recurring events, multiple calendars, and creates new ones on demand.
+## Commands
 
-### Research Mode
+### Schedule Events
 
-Email with subject `Research: <email>` (case-insensitive) and your question in the body. The agent will research and send the response to the specified email.
+Subject contains "schedule" or "appointment":
 
-Example:
-- Subject: `Research: me@example.com`
-- Body: `What are the best practices for Python async programming?`
+```
+Subject: Schedule dentist appointment
+Body: Dr. Smith next Tuesday at 2pm, should take about an hour
+```
 
-### Calendar Query Mode
+### Research
 
-Email with subject `Calendar: <email>` (case-insensitive) and your question in the body. The agent will check your calendars and respond.
+Subject: `Research: <reply-email>`
 
-Examples:
-- Subject: `Calendar: me@example.com`
-- Body: `When is my next dentist appointment?`
+```
+Subject: Research: me@example.com
+Body: What are the best practices for Python async programming?
+```
 
-- Subject: `Calendar: me@example.com`
-- Body: `What events do I have this week on the work calendar?`
+### Calendar Query
+
+Subject: `Calendar: <reply-email>`
+
+```
+Subject: Calendar: me@example.com
+Body: What do I have this week?
+```
 
 ## Quick Start
-
-### 1. Clone and configure
 
 ```bash
 git clone https://github.com/closedform/cloud_agent.git
 cd cloud_agent
 
-# Install uv (fast Python package manager)
+# Install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Install dependencies
 uv sync
 
-# Configure your API keys
+# Configure
 cp .env.example .env
-# Edit .env with your Gemini API key and Gmail app password
+# Edit .env with your API keys
 ```
 
-### 2. Get your credentials
+### Credentials
 
 - **Gemini API Key**: Free from [aistudio.google.com](https://aistudio.google.com)
 - **Gmail App Password**: From [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
-- **Google Calendar**: Run `uv run python -m src.clients.calendar --auth` to authorize
+- **Google Calendar**: Run `uv run python -m src.clients.calendar --list-calendars` to authorize
 
-### 3. Run locally (to test)
+### Run Locally
 
 ```bash
-# Terminal 1: The brain (processes tasks)
+# Terminal 1: Orchestrator (brain)
 uv run python -m src.orchestrator
 
-# Terminal 2: The ears (listens for emails)
+# Terminal 2: Poller (ears)
 uv run python -m src.poller
 ```
 
-### 4. Deploy to the cloud
+### Deploy to Cloud
 
-Follow [docs/deployment.md](docs/deployment.md) to set up your free GCP VM.
+See [docs/deployment.md](docs/deployment.md) for the full GCP setup guide.
+
+Quick version:
+```bash
+git clone https://github.com/closedform/cloud_agent.git
+cd cloud_agent && uv sync
+tmux new -s agent -d 'uv run python -m src.orchestrator' \; split-window -h 'uv run python -m src.poller'
+```
 
 ## Project Structure
 
 ```
 cloud_agent/
 ├── src/
-│   ├── orchestrator.py      # Brain: Gemini-powered task processor
-│   ├── poller.py            # Ears: IMAP listener for commands
+│   ├── orchestrator.py      # Brain: routes tasks to handlers
+│   ├── poller.py            # Ears: parses email, creates tasks
 │   └── clients/
-│       └── calendar.py      # Hands: Google Calendar operations
+│       ├── calendar.py      # Google Calendar operations
+│       └── email.py         # SMTP email sending
 ├── docs/
-│   ├── deployment.md        # Cloud deployment guide
+│   ├── deployment.md        # GCP deployment guide
 │   └── tutorial.md          # Architecture deep-dive
+├── inputs/                  # Task queue (created at runtime)
+├── processed/               # Completed tasks (created at runtime)
 ├── .env.example
 ├── pyproject.toml
-├── README.md
-└── CHANGELOG.md
+└── README.md
 ```
 
-## Extending the Agent
+## Extending
 
-This is a starting point. The architecture is intentionally simple - add new "tools" by:
+Add new capabilities:
 
-1. Writing a new client in `src/clients/`
-2. Adding routing logic to `src/poller.py`
-3. Updating the system prompt in `src/orchestrator.py`
+1. Create a client in `src/clients/` (e.g., `tasks.py`, `notes.py`)
+2. Add intent parsing in `src/poller.py`
+3. Add handler in `src/orchestrator.py`
 
 Ideas: task management, home automation, expense tracking, flight monitoring.
 
-### Deploying Updates
-
-Once your VM is set up, deploy changes with git:
-
-```bash
-# On your local machine: make changes, commit, push
-git add . && git commit -m "Add new feature" && git push
-
-# On your VM: pull and restart
-cd ~/cloud_agent
-git pull
-uv sync
-tmux kill-session -t agent
-tmux new -s agent -d 'uv run python -m src.orchestrator' \; split-window -h 'uv run python -m src.poller'
-```
-
 ## Documentation
 
-- [docs/tutorial.md](docs/tutorial.md) - Architecture deep-dive and philosophy
-- [docs/deployment.md](docs/deployment.md) - Step-by-step cloud deployment guide
+- [docs/deployment.md](docs/deployment.md) - GCP deployment guide
+- [docs/tutorial.md](docs/tutorial.md) - Architecture overview
 
 ## License
 

@@ -11,6 +11,10 @@ production.env
 # OS
 .DS_Store
 
+# Local notes
+SECRET.md
+GUIDE.md
+
 # Google Credentials (CRITICAL)
 credentials.json
 token.json

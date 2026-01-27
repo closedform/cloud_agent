@@ -7,11 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Refactored to flexible orchestrator architecture
+- Poller is now thin: parses emails, creates task files in inputs/
+- Orchestrator is the central brain: processes all task types
+- Extracted email sending to src/clients/email.py
+
 ### Added
 
-- Research feature: email with subject "Research: <email>" (case-insensitive) and query in body to get AI-powered research sent to specified email
-- Calendar query feature: email with subject "Calendar: <email>" and question in body to query your calendars
-- SMTP email sending capability for agent responses
+- Research feature: email with subject "Research: <email>" and query in body
+- Calendar query feature: email with subject "Calendar: <email>" and question in body
+- Task-based queue system (JSON files in inputs/ folder)
 
 ## [0.1.0] - 2025-01-26
 
