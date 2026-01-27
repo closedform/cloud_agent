@@ -39,12 +39,21 @@ def get_email_body(msg: Message) -> str:
             if content_type == "text/plain" and "attachment" not in content_disposition:
                 payload = part.get_payload(decode=True)
                 if payload:
-                    body = payload.decode()
+                    # Try common encodings, fallback to replace errors
+                    charset = part.get_content_charset() or "utf-8"
+                    try:
+                        body = payload.decode(charset)
+                    except (UnicodeDecodeError, LookupError):
+                        body = payload.decode("utf-8", errors="replace")
                 break
     else:
         payload = msg.get_payload(decode=True)
         if payload:
-            body = payload.decode()
+            charset = msg.get_content_charset() or "utf-8"
+            try:
+                body = payload.decode(charset)
+            except (UnicodeDecodeError, LookupError):
+                body = payload.decode("utf-8", errors="replace")
     return body
 
 
@@ -142,11 +151,14 @@ def process_emails(config: Config) -> None:
                 for response_part in msg_data:
                     if isinstance(response_part, tuple):
                         msg = email.message_from_bytes(response_part[1])
-                        subject_header = decode_header(msg["Subject"])[0][0]
+                        subject_header, charset = decode_header(msg["Subject"])[0]
                         if isinstance(subject_header, bytes):
-                            subject = subject_header.decode()
+                            try:
+                                subject = subject_header.decode(charset or "utf-8")
+                            except (UnicodeDecodeError, LookupError):
+                                subject = subject_header.decode("utf-8", errors="replace")
                         else:
-                            subject = subject_header
+                            subject = subject_header or "(No Subject)"
 
                         print(f"Received: {subject}")
 

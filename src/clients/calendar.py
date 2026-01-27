@@ -5,9 +5,9 @@ moved to src/cli/calendar_cli.py.
 """
 
 import datetime
-import sys
 from typing import TYPE_CHECKING, Any
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -41,15 +41,21 @@ def get_service(config: "Config") -> Any:
     # If there are no (valid) credentials available, let the user log in
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+            except RefreshError as e:
+                print(f"Failed to refresh credentials: {e}")
+                print("Token may be revoked or expired. Please re-authenticate.")
+                # Delete invalid token so next run triggers re-auth
+                token_path.unlink(missing_ok=True)
+                creds = None
+        if not creds:
             if not creds_path.exists():
-                print(f"Error: credentials.json not found at {creds_path}.")
-                print(
+                raise FileNotFoundError(
+                    f"credentials.json not found at {creds_path}. "
                     "Please follow the README instructions to download your "
                     "credentials from Google Cloud Console."
                 )
-                sys.exit(1)
 
             print("Launching browser for authentication...")
             flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
@@ -178,7 +184,7 @@ def list_events(service: Any, calendar_id: str = "primary", max_results: int = 1
         max_results: Maximum number of events to show.
     """
     try:
-        now = datetime.datetime.utcnow().isoformat() + "Z"
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
         print(f"Getting the next {max_results} upcoming events for calendar: {calendar_id}")
         events_result = (
             service.events()
@@ -220,7 +226,7 @@ def get_upcoming_events(
         List of event dictionaries with summary, start, end, description.
     """
     try:
-        now = datetime.datetime.utcnow().isoformat() + "Z"
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
         events_result = (
             service.events()
             .list(
@@ -268,6 +274,97 @@ def get_all_upcoming_events(
 
     for cal_name, cal_id in cal_map.items():
         events = get_upcoming_events(service, cal_id, max_results_per_calendar)
+        if events:
+            all_events[cal_name] = events
+
+    return all_events
+
+
+def get_events_in_range(
+    service: Any,
+    calendar_id: str,
+    time_min: datetime.datetime,
+    time_max: datetime.datetime,
+    max_results: int = 50,
+) -> list[dict[str, Any]]:
+    """Get events within a specific time range.
+
+    Args:
+        service: Google Calendar service object.
+        calendar_id: Calendar ID to get events from.
+        time_min: Start of time range (inclusive).
+        time_max: End of time range (inclusive).
+        max_results: Maximum number of events to return.
+
+    Returns:
+        List of event dictionaries with summary, start, end, description.
+    """
+    # Validate: require timezone-aware datetimes to avoid ambiguous behavior
+    # Google Calendar interprets naive timestamps inconsistently
+    if time_min.tzinfo is None or time_max.tzinfo is None:
+        print(
+            "Warning: get_events_in_range called with naive datetimes. "
+            "Use datetime.now(ZoneInfo(tz)) or get_week_bounds(tz=...) instead."
+        )
+        return []
+
+    try:
+        # Format as RFC3339 with timezone offset (convert +00:00 to Z for UTC)
+        time_min_str = time_min.isoformat().replace("+00:00", "Z")
+        time_max_str = time_max.isoformat().replace("+00:00", "Z")
+
+        events_result = (
+            service.events()
+            .list(
+                calendarId=calendar_id,
+                timeMin=time_min_str,
+                timeMax=time_max_str,
+                maxResults=max_results,
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+        )
+        events = events_result.get("items", [])
+
+        result = []
+        for event in events:
+            result.append(
+                {
+                    "summary": event.get("summary", "No title"),
+                    "start": event["start"].get("dateTime", event["start"].get("date")),
+                    "end": event["end"].get("dateTime", event["end"].get("date")),
+                    "description": event.get("description", ""),
+                }
+            )
+        return result
+    except HttpError as error:
+        print(f"Error fetching events in range: {error}")
+        return []
+
+
+def get_all_events_in_range(
+    service: Any,
+    time_min: datetime.datetime,
+    time_max: datetime.datetime,
+    max_results_per_calendar: int = 50,
+) -> dict[str, list[dict[str, Any]]]:
+    """Get events from all calendars within a time range.
+
+    Args:
+        service: Google Calendar service object.
+        time_min: Start of time range.
+        time_max: End of time range.
+        max_results_per_calendar: Maximum events per calendar.
+
+    Returns:
+        Dictionary mapping calendar names to lists of events.
+    """
+    all_events = {}
+    cal_map = get_calendar_map(service)
+
+    for cal_name, cal_id in cal_map.items():
+        events = get_events_in_range(service, cal_id, time_min, time_max, max_results_per_calendar)
         if events:
             all_events[cal_name] = events
 

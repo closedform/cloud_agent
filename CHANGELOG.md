@@ -9,31 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- AI-powered intent classification: Gemini parses natural language requests instead of rigid subject formats
-- Status command: check agent health, API connectivity, and recent tasks
-- Reminder feature: set reminders that fire at scheduled times using threading.Timer
-- Help feature: ask the agent about its own capabilities
-- Separate research model (gemini-2.5-flash) for free Google Search grounding
-- Centralized configuration (`src/config.py`) with `@lru_cache` for single `load_dotenv()` call
-- Atomic task file writes (`src/task_io.py`) to prevent race conditions
-- Typed Task and Reminder models (`src/models/task.py`) with validation
-- Handler registry with `@register_handler` decorator (`src/handlers/base.py`)
-- Modular handlers in `src/handlers/` directory (schedule, research, calendar_query, status, reminder, help)
-- Service factory (`src/services.py`) for explicit service initialization
-- Calendar CLI (`src/cli/calendar_cli.py`) separated from library code
+- **Google ADK Multi-Agent Architecture**: Complete rewrite using Google Agent Development Kit
+  - RouterAgent: Orchestrator that analyzes intent, delegates to specialists, sends email responses
+  - CalendarAgent: Schedules events, queries calendar, lists calendars
+  - PersonalDataAgent: Manages lists (movies, groceries, etc.) and todos with reminder scheduling
+  - AutomationAgent: Creates reminders and automation rules (cron-based and event-triggered)
+  - ResearchAgent: Sub-orchestrator for weather forecasts, diary queries, delegates web searches
+  - WebSearchAgent: Web search using gemini-2.5-flash for free Google Search grounding
+  - SystemAgent: Status checks and help/capabilities
+  - SystemAdminAgent: Crontab management, disk/memory monitoring, git operations, tests
+- **Multi-turn conversations**: Thread ID from normalized subject + sender enables conversational context
+- **Session management** (`src/sessions/`): FileSessionStore for conversation tracking
+- **Persistent memory** (`src/memory.py`): Store/recall user facts across conversations
+- **Weekly diary** (`src/diary.py`): Activity summaries generated from todos, reminders, and calendar
+- **Automation rules** (`src/rules.py`): Time-based (cron) and event-based (calendar triggers)
+- **Background scheduler** (`src/scheduler.py`): 60s interval thread for rules and weekly diary generation
+- **User identities** (`src/identities.py`): Maps email addresses to user identities for personalization
+- **Per-user data storage** (`src/user_data.py`): Persistent storage for lists and todos
+- **Agent tools** (`src/agents/tools/`): Domain-specific tools with thread-safe context helpers
+- **Test suite** (`tests/`): Comprehensive pytest tests with fixtures for all core components
 
 ### Changed
 
-- Refactored to flexible orchestrator architecture
-- Poller is now ultra-thin: just extracts email data and creates task files
-- Orchestrator classifies intent with Gemini, then routes to handlers
-- Reminders use threading.Timer for precise scheduling (no polling)
-- Default poll interval changed to 60 seconds (was 1800)
-- Default model changed to gemini-3-flash-preview
-- Removed import-time side effects: `import src.orchestrator` no longer calls APIs or exits
-- Email client now accepts credentials as parameters instead of reading from env
-- Calendar client now accepts Config object for path resolution
-- All paths anchored to project root (found via pyproject.toml)
+- **Replaced handler-based architecture with ADK agents**: Sub-agents return results via `output_key` state, RouterAgent composes responses
+- **New orchestrator** (`src/adk_orchestrator.py`): Processes task files, manages sessions, runs background scheduler
+- Default model changed to gemini-3-flash
+- Poller simplified to only create task files from unread emails
+- Calendar client enhanced with better timezone handling and event querying
+- Email client enhanced with conversation tracking and reply-to handling
+
+### Removed
+
+- Old handler-based system (`src/handlers/`)
+- Old orchestrator (`src/orchestrator.py`)
 
 ## [0.1.0] - 2025-01-26
 

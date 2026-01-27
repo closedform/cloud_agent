@@ -11,6 +11,7 @@ from google import genai
 
 from src.clients import calendar as calendar_client
 from src.config import Config
+from src.identities import Identity, get_identity
 
 
 @dataclass
@@ -20,6 +21,10 @@ class Services:
     gemini_client: genai.Client
     calendar_service: Any | None  # Google Calendar service or None
     calendars: dict[str, str]  # calendar_name -> calendar_id mapping
+
+    def get_identity(self, email: str) -> Identity | None:
+        """Get identity for an email address."""
+        return get_identity(email)
 
 
 def create_services(config: Config) -> Services:

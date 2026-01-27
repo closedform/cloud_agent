@@ -19,24 +19,25 @@ An autonomous agent that runs on Google's free infrastructure. It listens for co
 You --> [Email] --> Gmail --> [IMAP] --> Poller
                                            |
                                            v
-                                      Orchestrator --[Gemini]--> classify intent
+                                      RouterAgent (orchestrator)
                                            |
-              +----------------------------+----------------------------+
-              |              |              |              |             |
-          schedule       research     calendar_query   reminder      status
-              |              |              |              |             |
-         Calendar API   Gemini+Search   Gemini        Timer         Health
-              |              |              |              |             |
-              +--------------+--------------+--------------+-------------+
+         +---------------------------------+----------------------------------+
+         |              |              |              |              |        |
+    CalendarAgent  ResearchAgent  PersonalData  AutomationAgent  System  SystemAdmin
+         |              |           Agent            |            Agent    Agent
+    Calendar API   WebSearch     Lists/Todos     Reminders/Rules  Status   Crontab
+         |              |              |              |              |        |
+         +--------------+--------------+--------------+--------------+--------+
                                            |
                                            v
                                       [SMTP] --> You
 ```
 
 **Poller** (`src/poller.py`) - Watches Gmail, creates task files (atomic writes)
-**Orchestrator** (`src/orchestrator.py`) - Classifies intent, routes to handlers
-**Handlers** (`src/handlers/`) - Modular handlers for each intent type
-**Clients** (`src/clients/`) - Calendar, email, and future integrations
+**ADK Orchestrator** (`src/adk_orchestrator.py`) - Processes tasks, manages sessions, runs scheduler
+**RouterAgent** (`src/agents/router.py`) - Routes to specialist agents, sends email responses
+**Agents** (`src/agents/`) - Specialist agents for calendar, research, personal data, automation, system
+**Clients** (`src/clients/`) - Calendar, email, and weather integrations
 
 ## Commands
 
@@ -118,8 +119,8 @@ cp .env.example .env
 ### Run Locally
 
 ```bash
-# Terminal 1: Orchestrator (brain)
-uv run python -m src.orchestrator
+# Terminal 1: ADK Orchestrator (brain - multi-agent)
+uv run python -m src.adk_orchestrator
 
 # Terminal 2: Poller (ears)
 uv run python -m src.poller
@@ -133,7 +134,7 @@ Quick version:
 ```bash
 git clone https://github.com/closedform/cloud_agent.git
 cd cloud_agent && uv sync
-tmux new -s agent -d 'uv run python -m src.orchestrator' \; split-window -h 'uv run python -m src.poller'
+tmux new -s agent -d 'uv run python -m src.adk_orchestrator' \; split-window -h 'uv run python -m src.poller'
 ```
 
 ## Project Structure
@@ -144,18 +145,20 @@ cloud_agent/
 │   ├── config.py            # Centralized configuration
 │   ├── services.py          # Service factory (Gemini, Calendar)
 │   ├── task_io.py           # Atomic file I/O
-│   ├── orchestrator.py      # Brain: classifies intent, routes to handlers
+│   ├── adk_orchestrator.py  # Brain: multi-agent orchestrator (Google ADK)
 │   ├── poller.py            # Ears: watches email, creates tasks
+│   ├── scheduler.py         # Background scheduler for rules and diaries
 │   ├── models/
 │   │   └── task.py          # Task and Reminder dataclasses
-│   ├── handlers/
-│   │   ├── base.py          # Handler registry (@register_handler)
-│   │   ├── schedule.py      # Calendar event creation
-│   │   ├── research.py      # Web research
-│   │   ├── calendar_query.py
-│   │   ├── reminder.py
-│   │   ├── status.py
-│   │   └── help.py
+│   ├── agents/
+│   │   ├── router.py        # RouterAgent - orchestrates sub-agents
+│   │   ├── calendar_agent.py
+│   │   ├── research_agent.py
+│   │   ├── personal_data_agent.py
+│   │   ├── automation_agent.py
+│   │   ├── system_agent.py
+│   │   ├── system_admin_agent.py
+│   │   └── tools/           # Agent tool functions
 │   ├── clients/
 │   │   ├── calendar.py      # Google Calendar operations
 │   │   └── email.py         # SMTP email sending
@@ -176,20 +179,33 @@ cloud_agent/
 
 Add new capabilities:
 
-1. Create a client in `src/clients/` (e.g., `tasks.py`, `notes.py`)
-2. Create a handler in `src/handlers/` with `@register_handler("your_intent")`
-3. Add the intent to `classify_intent()` in `src/orchestrator.py`
-
-Example handler:
+1. **Add tools** in `src/agents/tools/your_tools.py`:
 ```python
-# src/handlers/todo.py
-from src.handlers.base import register_handler
+from src.agents.tools._context import get_user_email
 
-@register_handler("todo")
-def handle_todo(task, config, services):
-    # Your logic here
-    pass
+def your_tool(param: str) -> dict:
+    """Tool description for the agent."""
+    email = get_user_email()
+    return {"status": "success", "result": "..."}
 ```
+
+2. **Create an agent** in `src/agents/`:
+```python
+from google.adk import Agent
+from src.config import get_config
+
+_config = get_config()
+
+your_agent = Agent(
+    name="YourAgent",
+    model=_config.gemini_model,
+    instruction="Your agent's system prompt...",
+    tools=[your_tool],
+    output_key="your_results",
+)
+```
+
+3. **Add as sub-agent to RouterAgent** in `src/agents/router.py`
 
 Ideas: task management, home automation, expense tracking, flight monitoring.
 

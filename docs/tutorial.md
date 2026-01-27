@@ -51,15 +51,9 @@ The poller doesn't parse intent--it just passes the raw email data to the orches
 
 **Atomic writes:** Task files are written using `write_task_atomic()` from `src/task_io.py`, which uses temp file + rename to prevent the orchestrator from reading partially-written files.
 
-### 3. The Brain: Orchestrator (`src/orchestrator.py`)
+### 3. The Brain: ADK Orchestrator (`src/adk_orchestrator.py`)
 
-The orchestrator is the central router. It watches the `inputs/` folder, classifies intent using Gemini, and dispatches tasks to the right handler.
-
-**Intent Classification:**
-When a task arrives, `classify_intent()` sends the subject and body to Gemini, which returns:
-- Intent type (schedule, research, calendar_query, reminder, status, help)
-- Summary of what the user wants
-- Extracted data (e.g., reminder time and message)
+The ADK orchestrator watches the `inputs/` folder and delegates tasks to the RouterAgent, a multi-agent system built with Google ADK.
 
 **Services:** The orchestrator initializes services once at startup via `create_services()`:
 ```python
@@ -70,64 +64,55 @@ config = get_config()
 services = create_services(config)  # Gemini client, Calendar service
 ```
 
-This eliminates import-time side effects--`import src.orchestrator` no longer makes API calls or exits.
+This eliminates import-time side effects and makes the system testable.
 
-### 4. The Handlers: `src/handlers/`
+### 4. The Agents: `src/agents/`
 
-Each handler is a separate module with a function decorated with `@register_handler`:
+The system uses a multi-agent architecture where RouterAgent orchestrates specialist sub-agents:
 
 ```
-src/handlers/
-  __init__.py       # Registry exports
-  base.py           # @register_handler decorator, HANDLERS dict
-  schedule.py       # Calendar event creation
-  research.py       # Web research with Google Search
-  calendar_query.py # Calendar Q&A
-  reminder.py       # Scheduled reminders
-  status.py         # Health reports
-  help.py           # Usage information
+src/agents/
+  router.py             # RouterAgent - orchestrates sub-agents, sends emails
+  calendar_agent.py     # Schedule events, query calendar
+  research_agent.py     # Web search, weather, diary queries
+  personal_data_agent.py # Lists, todos
+  automation_agent.py   # Reminders, rules
+  system_agent.py       # Status, help
+  system_admin_agent.py # Crontab, git, tests (admin only)
+  tools/                # Agent tool functions
 ```
 
-**Handler signature:**
+**Agent pattern:**
 ```python
-from src.config import Config
-from src.handlers.base import register_handler
-from src.models import Task
-from src.services import Services
+from google.adk import Agent
+from src.config import get_config
 
-@register_handler("schedule")
-def handle_schedule(task: Task, config: Config, services: Services) -> None:
-    # Use task.subject, task.body, etc.
-    # Use config.gemini_model, config.input_dir, etc.
-    # Use services.gemini_client, services.calendar_service, etc.
-    pass
+_config = get_config()
+
+your_agent = Agent(
+    name="YourAgent",
+    model=_config.gemini_model,
+    instruction="Your agent's system prompt...",
+    tools=[your_tool_function],
+    output_key="your_results",  # Results flow back to RouterAgent
+)
 ```
 
-**Adding new handlers:**
+**Adding new capabilities:**
 
-1. Create a new handler file `src/handlers/todo.py`:
+1. Add tools in `src/agents/tools/your_tools.py`:
 ```python
-from src.config import Config
-from src.handlers.base import register_handler
-from src.models import Task
-from src.services import Services
+from src.agents.tools._context import get_user_email
 
-@register_handler("todo")
-def handle_todo(task: Task, config: Config, services: Services) -> None:
-    # Your logic here
-    pass
+def your_tool(param: str) -> dict:
+    """Tool description for the agent."""
+    email = get_user_email()
+    return {"status": "success", "result": "..."}
 ```
 
-2. Import it in `src/handlers/__init__.py`:
-```python
-from src.handlers.todo import handle_todo
-```
+2. Create an agent in `src/agents/your_agent.py` using the pattern above.
 
-3. Add the intent to `classify_intent()` in orchestrator.py:
-```python
-# In the prompt, add to AVAILABLE INTENTS:
-- "todo": Manage todo items (add, list, complete tasks)
-```
+3. Add as sub-agent to RouterAgent in `src/agents/router.py` and update routing guidelines.
 
 ### 5. The Hands: Clients (`src/clients/`)
 
@@ -178,19 +163,19 @@ Task moved to processed/
 ## Why This Architecture?
 
 **No import-time side effects:**
-- `import src.orchestrator` doesn't call APIs or exit
+- `import src.adk_orchestrator` doesn't call APIs or exit
 - Services initialized explicitly in `main()`
 - Safe for testing and tooling
 
 **Separation of concerns:**
 - Config handles all environment/path logic
 - Poller only does email → task conversion
-- Orchestrator only does task → action routing
-- Handlers focus on single intents
+- RouterAgent orchestrates specialist agents
+- Each agent focuses on a single domain
 - Clients only do API operations
 
 **Easy to extend:**
-- New intent = new handler file with `@register_handler`
+- New capability = new agent with tools
 - New API = new client with explicit parameters
 - No need to touch the core loop
 
@@ -206,7 +191,7 @@ Task moved to processed/
 **Resilient:**
 - Poller can fail without losing the orchestrator
 - Tasks persist as files, survive restarts
-- Handlers are isolated, one failure doesn't break others
+- Agents are isolated, one failure doesn't break others
 
 ## Models
 

@@ -72,54 +72,52 @@ The poller doesn't think. It doesn't call Gemini. It just listens and creates wo
 }
 ```
 
-### 2) The brain: `src/orchestrator.py`
+### 2) The brain: `src/adk_orchestrator.py` and `src/agents/`
 
-The orchestrator is the central router. It watches the `inputs/` folder, uses Gemini to classify what the user wants, and dispatches to the right handler.
+The ADK orchestrator watches the `inputs/` folder and delegates tasks to the RouterAgent, a multi-agent system built with Google ADK.
 
-**Classification:** When a task arrives, Gemini analyzes the subject and body to determine intent. No rigid subject formats required--users can write naturally.
+**Agent hierarchy:**
+- `RouterAgent` (orchestrator) -> Routes to specialist agents, sends email responses
+  - `CalendarAgent` -> Schedule events, query calendar
+  - `ResearchAgent` -> Web search, weather, diary queries
+  - `PersonalDataAgent` -> Lists, todos
+  - `AutomationAgent` -> Reminders, rules
+  - `SystemAgent` -> Status, help
+  - `SystemAdminAgent` -> Crontab, git, tests (admin only)
 
-**Handlers (in `src/handlers/`):**
-- `schedule.py` -> Create calendar event
-- `research.py` -> Query Gemini with web search, email response
-- `calendar_query.py` -> Fetch events, query Gemini, email response
-- `status.py` -> Generate health report, email response
-- `reminder.py` -> Schedule reminder with threading.Timer, send confirmation
-- `help.py` -> Answer questions about the system
-
-Each handler receives three things:
-- `task: Task` - The parsed task data
-- `config: Config` - Centralized configuration
-- `services: Services` - Initialized clients (Gemini, Calendar)
+Each agent has domain-specific tools in `src/agents/tools/`. Sub-agents return results via state (e.g., `{calendar_results}`), and RouterAgent composes the final email response.
 
 After processing, tasks get moved to `processed/` for review. Tasks that fail to parse after `MAX_TASK_RETRIES` attempts (default: 3) are moved to `failed/` for manual inspection.
 
-**Adding new handlers:**
+**Adding new capabilities:**
 
-1. Create a new handler file `src/handlers/todo.py`:
+1. Add tools in `src/agents/tools/your_tools.py`:
 ```python
-from src.config import Config
-from src.handlers.base import register_handler
-from src.models import Task
-from src.services import Services
+from src.agents.tools._context import get_user_email
 
-@register_handler("todo")
-def handle_todo(task: Task, config: Config, services: Services) -> None:
-    # Your logic here
-    pass
+def your_tool(param: str) -> dict:
+    """Tool description for the agent."""
+    email = get_user_email()
+    return {"status": "success", "result": "..."}
 ```
 
-2. Import it in `src/handlers/__init__.py`:
+2. Create an agent in `src/agents/your_agent.py`:
 ```python
-from src.handlers.todo import handle_todo
+from google.adk import Agent
+from src.config import get_config
+
+_config = get_config()
+
+your_agent = Agent(
+    name="YourAgent",
+    model=_config.gemini_model,
+    instruction="Your agent's system prompt...",
+    tools=[your_tool],
+    output_key="your_results",
+)
 ```
 
-3. Add the intent to `classify_intent()` in orchestrator.py:
-```python
-# In the prompt, add to AVAILABLE INTENTS:
-- "todo": Manage todo items (add, list, complete tasks)
-```
-
-That's it. The `@register_handler` decorator automatically registers your handler. Gemini handles the parsing--you just need to describe when your intent should match.
+3. Add as sub-agent to RouterAgent in `src/agents/router.py` and update the routing guidelines in its instruction.
 
 ### 3) The config: `src/config.py`
 
@@ -249,7 +247,7 @@ uv run python -m src.cli.calendar_cli --list-calendars
 
 ```bash
 # Terminal 1 (brain)
-uv run python -m src.orchestrator
+uv run python -m src.adk_orchestrator
 
 # Terminal 2 (ears)
 uv run python -m src.poller
@@ -266,7 +264,7 @@ If you want the always-on version, deploy to a GCP "Always Free" VM and keep it 
 git clone https://github.com/closedform/cloud_agent.git
 cd cloud_agent
 uv sync
-tmux new -s agent -d 'uv run python -m src.orchestrator' \; split-window -h 'uv run python -m src.poller'
+tmux new -s agent -d 'uv run python -m src.adk_orchestrator' \; split-window -h 'uv run python -m src.poller'
 ```
 
 ## The two-model trick
@@ -287,11 +285,11 @@ If Google changes the pricing or you get API access to grounding on 3 Flash, jus
 
 ## Extending it
 
-The easiest mental model is: add more "hands" and teach the "brain" when to use them.
+The easiest mental model is: add more specialist agents with domain-specific tools.
 
-1. Create a new client in `src/clients/` (tasks, notes, home automation, whatever)
-2. Create a handler in `src/handlers/` with the `@register_handler` decorator
-3. Add the new intent to `classify_intent()` in `src/orchestrator.py`
+1. Add tools in `src/agents/tools/your_tools.py`
+2. Create an agent in `src/agents/your_agent.py`
+3. Add as sub-agent to RouterAgent in `src/agents/router.py`
 
 Ideas: task management, home automation, expense tracking, flight monitoring, weather alerts.
 
@@ -302,20 +300,21 @@ src/
   config.py           # Centralized configuration (cached, immutable)
   services.py         # Service factory (Gemini client, Calendar service)
   task_io.py          # Atomic file I/O for task files
-  orchestrator.py     # Brain: routes tasks to handlers
+  adk_orchestrator.py # Brain: processes tasks via RouterAgent
   poller.py           # Ears: watches email, creates tasks
+  scheduler.py        # Background scheduler for rules and diaries
   models/
     __init__.py
     task.py           # Task and Reminder dataclasses
-  handlers/
-    __init__.py       # Handler registry exports
-    base.py           # @register_handler decorator
-    schedule.py       # Calendar event creation
-    research.py       # Web research
-    calendar_query.py # Calendar queries
-    reminder.py       # Reminders
-    status.py         # Health reports
-    help.py           # Usage help
+  agents/
+    router.py         # RouterAgent - orchestrates sub-agents
+    calendar_agent.py
+    research_agent.py
+    personal_data_agent.py
+    automation_agent.py
+    system_agent.py
+    system_admin_agent.py
+    tools/            # Agent tool functions
   clients/
     calendar.py       # Google Calendar API
     email.py          # SMTP email

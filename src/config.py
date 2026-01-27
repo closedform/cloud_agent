@@ -38,6 +38,7 @@ class Config:
     email_user: str
     email_pass: str
     allowed_senders: tuple[str, ...]
+    admin_emails: tuple[str, ...]  # Emails allowed to use SystemAdminAgent
     poll_interval: int
     imap_server: str
     smtp_server: str
@@ -49,6 +50,12 @@ class Config:
     processed_dir: Path
     failed_dir: Path
     reminders_file: Path
+    reminder_log_file: Path
+    user_data_file: Path
+    rules_file: Path
+    diary_file: Path
+    triggered_file: Path
+    sessions_file: Path
     token_path: Path
     credentials_path: Path
 
@@ -72,18 +79,23 @@ def get_config() -> Config:
     allowed_senders_env = os.getenv("ALLOWED_SENDERS", "")
     allowed_senders = tuple(s.strip() for s in allowed_senders_env.split(",") if s.strip())
 
+    # Parse admin emails (for SystemAdminAgent access)
+    admin_emails_env = os.getenv("ADMIN_EMAILS", "")
+    admin_emails = tuple(s.strip() for s in admin_emails_env.split(",") if s.strip())
+
     return Config(
         # API Keys
         gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
 
         # Model settings
-        gemini_model=os.getenv("GEMINI_MODEL", "gemini-3-flash-preview"),
+        gemini_model=os.getenv("GEMINI_MODEL", "gemini-3-flash"),
         gemini_research_model=os.getenv("GEMINI_RESEARCH_MODEL", "gemini-2.5-flash"),
 
         # Email settings
         email_user=os.getenv("EMAIL_USER", ""),
         email_pass=os.getenv("EMAIL_PASS", ""),
         allowed_senders=allowed_senders,
+        admin_emails=admin_emails,
         poll_interval=int(os.getenv("POLL_INTERVAL", "60")),
         imap_server=os.getenv("IMAP_SERVER", "imap.gmail.com"),
         smtp_server=os.getenv("SMTP_SERVER", "smtp.gmail.com"),
@@ -95,6 +107,12 @@ def get_config() -> Config:
         processed_dir=project_root / "processed",
         failed_dir=project_root / "failed",
         reminders_file=project_root / "reminders.json",
+        reminder_log_file=project_root / "reminder_log.json",
+        user_data_file=project_root / "user_data.json",
+        rules_file=project_root / "rules.json",
+        diary_file=project_root / "diary.json",
+        triggered_file=project_root / "triggered.json",
+        sessions_file=project_root / "sessions.json",
         token_path=project_root / "token.json",
         credentials_path=project_root / "credentials.json",
 
