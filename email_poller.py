@@ -11,6 +11,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+import calendar_client
 
 load_dotenv()
 
@@ -78,7 +79,11 @@ def process_email():
                             print(f"  -> Routing to Research Agent")
                             reply_to = subject[9:].strip()  # Email to reply to
                             process_research_email(msg, reply_to)
-                        elif any(keyword in subject_lower for keyword in ["calendar", "schedule", "appointment"]):
+                        elif subject_lower.startswith("calendar:"):
+                            print(f"  -> Routing to Calendar Query Agent")
+                            reply_to = subject[9:].strip()  # Email to reply to
+                            process_calendar_query(msg, reply_to)
+                        elif any(keyword in subject_lower for keyword in ["schedule", "appointment"]):
                             print(f"  -> Routing to Calendar Agent")
                             process_calendar_email(msg, subject)
                         else:
@@ -200,6 +205,89 @@ Provide a well-structured response with key facts and insights."""
             to_address=reply_to,
             subject="Research Error",
             body=f"Sorry, I encountered an error while researching: {e}"
+        )
+
+def process_calendar_query(msg, reply_to):
+    """Query calendar using Gemini and email the response."""
+    if not gemini_client:
+        print("Error: GEMINI_API_KEY not configured")
+        return
+
+    # Get query from email body
+    query = ""
+    if msg.is_multipart():
+        for part in msg.walk():
+            content_type = part.get_content_type()
+            content_disposition = str(part.get("Content-Disposition"))
+            if content_type == "text/plain" and "attachment" not in content_disposition:
+                query = part.get_payload(decode=True).decode()
+                break
+    else:
+        query = msg.get_payload(decode=True).decode()
+
+    if not query.strip():
+        print("Error: No query in email body")
+        return
+
+    print(f"Calendar query: {query[:100]}...")
+
+    # Fetch calendar events
+    try:
+        service = calendar_client.get_service()
+        calendars = calendar_client.get_calendar_map(service)
+        all_events = calendar_client.get_all_upcoming_events(service, max_results_per_calendar=20)
+
+        # Format events for context
+        events_context = f"Available calendars: {list(calendars.keys())}\n\n"
+        for cal_name, events in all_events.items():
+            events_context += f"\n=== {cal_name} ===\n"
+            for event in events:
+                events_context += f"- {event['summary']} | Start: {event['start']} | End: {event['end']}\n"
+                if event['description']:
+                    events_context += f"  Description: {event['description']}\n"
+
+        if not all_events:
+            events_context += "No upcoming events found in any calendar."
+
+    except Exception as e:
+        print(f"Error fetching calendar: {e}")
+        send_email(
+            to_address=reply_to,
+            subject="Calendar Query Error",
+            body=f"Sorry, I couldn't access the calendar: {e}"
+        )
+        return
+
+    prompt = f"""You are a calendar assistant. Answer the user's question based on the calendar data below.
+
+USER QUESTION: {query}
+
+CALENDAR DATA:
+{events_context}
+
+Provide a clear, helpful answer. If asking about a specific calendar, focus on that one. Include relevant dates and times."""
+
+    try:
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[prompt]
+        )
+
+        result = response.text
+        print(f"Calendar query complete, sending response to {reply_to}")
+
+        subject_line = query.strip().split('\n')[0][:50]
+        send_email(
+            to_address=reply_to,
+            subject=f"Re: {subject_line}",
+            body=result
+        )
+    except Exception as e:
+        print(f"Calendar query error: {e}")
+        send_email(
+            to_address=reply_to,
+            subject="Calendar Query Error",
+            body=f"Sorry, I encountered an error: {e}"
         )
 
 def main():

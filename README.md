@@ -34,6 +34,17 @@ Example:
 - Subject: `Research: me@example.com`
 - Body: `What are the best practices for Python async programming?`
 
+### Calendar Query Mode
+
+Email with subject `Calendar: <email>` (case-insensitive) and your question in the body. The agent will check your calendars and respond.
+
+Examples:
+- Subject: `Calendar: me@example.com`
+- Body: `When is the next test on samantha_school?`
+
+- Subject: `Calendar: me@example.com`
+- Body: `What events do I have this week on bramantha?`
+
 ## Quick Start
 
 ### 1. Clone and configure

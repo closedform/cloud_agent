@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Research feature: email with subject "Research: <email>" (case-insensitive) and query in body to get AI-powered research sent to specified email
+- Calendar query feature: email with subject "Calendar: <email>" and question in body to query your calendars
 - SMTP email sending capability for agent responses
 
 ## [0.1.0] - 2025-01-26

@@ -148,6 +148,49 @@ def list_events(service, calendar_id='primary', max_results=10):
     except HttpError as error:
         print(f"An error occurred: {error}")
 
+def get_upcoming_events(service, calendar_id='primary', max_results=10):
+    """
+    Returns a list of upcoming events as dictionaries.
+    Each event has: summary, start, end, description
+    """
+    try:
+        now = datetime.datetime.utcnow().isoformat() + 'Z'
+        events_result = service.events().list(
+            calendarId=calendar_id,
+            timeMin=now,
+            maxResults=max_results,
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+        events = events_result.get('items', [])
+
+        result = []
+        for event in events:
+            result.append({
+                'summary': event.get('summary', 'No title'),
+                'start': event['start'].get('dateTime', event['start'].get('date')),
+                'end': event['end'].get('dateTime', event['end'].get('date')),
+                'description': event.get('description', '')
+            })
+        return result
+    except HttpError as error:
+        print(f"Error fetching events: {error}")
+        return []
+
+def get_all_upcoming_events(service, max_results_per_calendar=10):
+    """
+    Returns events from all calendars as a dict: {calendar_name: [events]}
+    """
+    all_events = {}
+    cal_map = get_calendar_map(service)
+
+    for cal_name, cal_id in cal_map.items():
+        events = get_upcoming_events(service, cal_id, max_results_per_calendar)
+        if events:
+            all_events[cal_name] = events
+
+    return all_events
+
 def main():
     import argparse
     
