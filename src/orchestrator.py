@@ -8,7 +8,9 @@ import os
 import json
 import time
 import shutil
+import threading
 from pathlib import Path
+from datetime import datetime
 from google import genai
 from google.genai import types
 from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
@@ -26,6 +28,7 @@ GEMINI_RESEARCH_MODEL = os.getenv("GEMINI_RESEARCH_MODEL", "gemini-2.5-flash")  
 
 INPUT_DIR = Path("inputs")
 PROCESSED_DIR = Path("processed")
+REMINDERS_FILE = Path("reminders.json")
 
 if not GEMINI_API_KEY:
     print("CRITICAL ERROR: GEMINI_API_KEY not found. Please set it in .env")
@@ -321,6 +324,273 @@ def handle_status(task: dict):
     print(f"  Status sent to {reply_to}")
 
 
+def handle_reminder(task: dict):
+    """Handle reminder creation tasks."""
+    reply_to = task.get("reply_to", "")
+    classification = task.get("classification", {})
+
+    if not reply_to:
+        print("  No reply_to address for reminder")
+        return
+
+    # Get reminder details from classification
+    reminder_message = classification.get("reminder_message")
+    reminder_time = classification.get("reminder_time")
+
+    if not reminder_message or not reminder_time:
+        # Need to re-parse if classification didn't extract details
+        subject = task.get("subject", "")
+        body = task.get("body", "")
+
+        prompt = f"""Parse this reminder request and extract the details.
+
+Subject: {subject}
+Body: {body}
+
+Current date/time: {datetime.now().strftime("%Y-%m-%d %H:%M")}
+
+Return JSON with:
+{{
+  "message": "The reminder message/subject line",
+  "datetime": "ISO 8601 datetime (YYYY-MM-DDTHH:MM:SS)"
+}}"""
+
+        try:
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=[prompt],
+                config=types.GenerateContentConfig(response_mime_type="application/json")
+            )
+
+            response_text = response.text
+            if "```json" in response_text:
+                response_text = response_text.replace("```json", "").replace("```", "")
+
+            data = json.loads(response_text)
+            reminder_message = data.get("message")
+            reminder_time = data.get("datetime")
+
+        except Exception as e:
+            print(f"  Reminder parse error: {e}")
+            send_email(
+                to_address=reply_to,
+                subject="Reminder Error",
+                body=f"Sorry, I couldn't understand your reminder request: {e}"
+            )
+            return
+
+    if not reminder_message or not reminder_time:
+        send_email(
+            to_address=reply_to,
+            subject="Reminder Not Understood",
+            body="Sorry, I couldn't parse your reminder. Try something like: 'Remind me to meet with Einstein tomorrow at 3pm'"
+        )
+        return
+
+    print(f"  Setting reminder: {reminder_message[:30]}... at {reminder_time}")
+
+    try:
+        # Load existing reminders
+        reminders = []
+        if REMINDERS_FILE.exists():
+            with open(REMINDERS_FILE, "r") as f:
+                reminders = json.load(f)
+
+        # Add new reminder
+        reminder = {
+            "id": task.get("id", str(int(time.time() * 1000))),
+            "message": reminder_message,
+            "datetime": reminder_time,
+            "reply_to": reply_to,
+            "created_at": datetime.now().isoformat()
+        }
+        reminders.append(reminder)
+
+        # Save reminders
+        with open(REMINDERS_FILE, "w") as f:
+            json.dump(reminders, f, indent=2)
+
+        # Schedule the reminder
+        schedule_reminder(reminder)
+
+        # Confirm to user
+        send_email(
+            to_address=reply_to,
+            subject=f"Reminder Set: {reminder_message[:50]}",
+            body=f"I'll remind you about: {reminder_message}\n\nScheduled for: {reminder_time}"
+        )
+        print(f"  Reminder set for {reminder_time} -> {reply_to}")
+
+    except Exception as e:
+        print(f"  Reminder error: {e}")
+        send_email(
+            to_address=reply_to,
+            subject="Reminder Error",
+            body=f"Sorry, I encountered an error setting your reminder: {e}"
+        )
+
+
+def handle_help(task: dict):
+    """Handle help/query tasks about the system itself."""
+    question = task.get("subject", "").strip()
+    reply_to = task.get("reply_to", "")
+
+    if not reply_to:
+        print("  No reply_to address for help")
+        return
+
+    print(f"  Help query: {question[:50]}...")
+
+    system_info = """You are a helpful assistant for the Cloud Agent system. Answer questions about what this system can do.
+
+SYSTEM CAPABILITIES:
+
+1. SCHEDULE EVENTS
+   Subject contains "schedule" or "appointment"
+   Example: "Schedule dentist appointment"
+   Body: "Dr. Smith next Tuesday at 2pm, should take about an hour"
+   -> Creates a Google Calendar event
+
+2. RESEARCH (with web search)
+   Subject: "Research: <your-email>"
+   Body: Your question
+   Example Subject: "Research: me@example.com"
+   Example Body: "What are the best practices for Python async?"
+   -> Searches the web and emails you the answer
+
+3. CALENDAR QUERIES
+   Subject: "Calendar: <your-email>"
+   Body: Your question about your schedule
+   Example Subject: "Calendar: me@example.com"
+   Example Body: "What do I have this week?"
+   -> Checks your calendars and emails you the answer
+
+4. REMINDERS
+   Subject: "REMIND ME: <thing> @ <time> ON <date>"
+   Example: "REMIND ME: meet with Einstein @ 3pm on friday"
+   -> Sends you an email reminder at the specified time
+
+5. STATUS CHECK
+   Subject: "Status: <your-email>"
+   -> Emails you a health report (API status, recent tasks, config)
+
+6. HELP (this feature)
+   Subject: Any question ending with "?" or starting with "how", "what", "help"
+   Example: "What can you do?" or "How do I set a reminder?"
+   -> Emails you helpful information
+
+TIPS:
+- All commands are sent via email to the agent's email address
+- Only emails from allowed senders are processed
+- The agent checks for new emails every minute
+- Reminders are checked every 5 seconds once created
+"""
+
+    prompt = f"""{system_info}
+
+USER QUESTION: {question}
+
+Provide a helpful, concise answer. Be friendly but direct. If they're asking about a specific feature, give them the exact format to use with an example."""
+
+    try:
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[prompt]
+        )
+
+        result = response.text
+
+        send_email(
+            to_address=reply_to,
+            subject=f"Re: {question[:50]}",
+            body=result
+        )
+        print(f"  Help response sent to {reply_to}")
+
+    except Exception as e:
+        print(f"  Help error: {e}")
+        send_email(
+            to_address=reply_to,
+            subject="Help Error",
+            body=f"Sorry, I encountered an error: {e}"
+        )
+
+
+def send_reminder(reminder_id: str, message: str, reply_to: str, created_at: str):
+    """Send a reminder email and remove it from storage."""
+    try:
+        send_email(
+            to_address=reply_to,
+            subject=message,
+            body=f"This is your reminder: {message}\n\nOriginally set: {created_at}"
+        )
+        print(f"Reminder fired: {message[:30]}... -> {reply_to}")
+
+        # Remove from reminders.json
+        if REMINDERS_FILE.exists():
+            with open(REMINDERS_FILE, "r") as f:
+                reminders = json.load(f)
+            reminders = [r for r in reminders if r.get("id") != reminder_id]
+            with open(REMINDERS_FILE, "w") as f:
+                json.dump(reminders, f, indent=2)
+
+    except Exception as e:
+        print(f"Error sending reminder: {e}")
+
+
+def schedule_reminder(reminder: dict):
+    """Schedule a reminder using threading.Timer."""
+    try:
+        reminder_time = datetime.fromisoformat(reminder["datetime"])
+        now = datetime.now()
+        delay = (reminder_time - now).total_seconds()
+
+        if delay <= 0:
+            # Already past due, send immediately
+            send_reminder(
+                reminder["id"],
+                reminder["message"],
+                reminder["reply_to"],
+                reminder.get("created_at", "unknown")
+            )
+        else:
+            # Schedule for later
+            timer = threading.Timer(
+                delay,
+                send_reminder,
+                args=[
+                    reminder["id"],
+                    reminder["message"],
+                    reminder["reply_to"],
+                    reminder.get("created_at", "unknown")
+                ]
+            )
+            timer.daemon = True
+            timer.start()
+            print(f"  Scheduled reminder in {delay:.0f}s: {reminder['message'][:30]}...")
+
+    except Exception as e:
+        print(f"Error scheduling reminder: {e}")
+
+
+def load_existing_reminders():
+    """Load and schedule any existing reminders from file."""
+    if not REMINDERS_FILE.exists():
+        return
+
+    try:
+        with open(REMINDERS_FILE, "r") as f:
+            reminders = json.load(f)
+
+        if reminders:
+            print(f"Loading {len(reminders)} existing reminder(s)...")
+            for reminder in reminders:
+                schedule_reminder(reminder)
+
+    except Exception as e:
+        print(f"Error loading reminders: {e}")
+
+
 # =============================================================================
 # HELPERS
 # =============================================================================
@@ -391,6 +661,53 @@ def create_calendar_event(event: dict):
         print(f"  Failed to create event: {e}")
 
 
+def classify_intent(task: dict) -> dict:
+    """Use Gemini to classify the intent of an incoming task."""
+    subject = task.get("subject", "")
+    body = task.get("body", "")
+
+    prompt = f"""Classify this email request. Return JSON with intent and any extracted data.
+
+SUBJECT: {subject}
+BODY: {body}
+
+CURRENT DATE/TIME: {datetime.now().strftime("%Y-%m-%d %H:%M")} (use this to resolve relative times like "tomorrow", "next friday")
+
+AVAILABLE INTENTS:
+- "schedule": Create a calendar event (keywords: schedule, appointment, meeting, event)
+- "research": Research a topic using web search (user wants information/research)
+- "calendar_query": Question about existing calendar/schedule (what do I have, when is, am I free)
+- "reminder": Set a reminder for later (remind me, don't forget, alert me)
+- "status": Check system status (status, health, working)
+- "help": Question about how to use this system (how do I, what can you, help)
+- "unknown": Can't determine intent
+
+Return JSON:
+{{
+  "intent": "one of the above",
+  "summary": "brief description of what user wants",
+  "reminder_time": "ISO datetime (YYYY-MM-DDTHH:MM:SS) if reminder, else null",
+  "reminder_message": "reminder text if reminder, else null"
+}}"""
+
+    try:
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[prompt],
+            config=types.GenerateContentConfig(response_mime_type="application/json")
+        )
+
+        response_text = response.text
+        if "```json" in response_text:
+            response_text = response_text.replace("```json", "").replace("```", "")
+
+        return json.loads(response_text)
+
+    except Exception as e:
+        print(f"  Classification error: {e}")
+        return {"intent": "unknown", "summary": str(e)}
+
+
 def process_task(task_file: Path):
     """Process a single task file."""
     print(f"Processing: {task_file.name}")
@@ -399,7 +716,13 @@ def process_task(task_file: Path):
         with open(task_file, "r") as f:
             task = json.load(f)
 
-        intent = task.get("intent", "unknown")
+        # Classify intent using Gemini
+        classification = classify_intent(task)
+        intent = classification.get("intent", "unknown")
+        print(f"  Intent: {intent} ({classification.get('summary', '')[:50]})")
+
+        # Add classification data to task
+        task["classification"] = classification
 
         if intent == "schedule":
             handle_schedule(task)
@@ -409,8 +732,12 @@ def process_task(task_file: Path):
             handle_calendar_query(task)
         elif intent == "status":
             handle_status(task)
+        elif intent == "reminder":
+            handle_reminder(task)
+        elif intent == "help":
+            handle_help(task)
         else:
-            print(f"  Unknown intent: {intent}")
+            print(f"  Unknown intent, skipping")
 
     except Exception as e:
         print(f"  Error processing task: {e}")
@@ -441,6 +768,9 @@ def main():
 
     INPUT_DIR.mkdir(exist_ok=True)
     PROCESSED_DIR.mkdir(exist_ok=True)
+
+    # Load and schedule any existing reminders
+    load_existing_reminders()
 
     while True:
         # Find task files

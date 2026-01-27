@@ -11,23 +11,18 @@ The poller is intentionally thin. It does one thing: watch Gmail and create task
 **Flow:**
 1. Connect to Gmail via IMAP
 2. Check for unread emails from allowed senders
-3. Parse the subject to determine intent
-4. Extract body and attachments
-5. Write a task file to `inputs/`
+3. Extract subject, body, and attachments
+4. Write a task file to `inputs/`
 
-**Intent parsing:**
-- Subject starts with `Research:` → research task
-- Subject starts with `Calendar:` → calendar query task
-- Subject contains "schedule" or "appointment" → schedule task
-- Anything else → ignored
+The poller doesn't parse intent--it just passes the raw email data to the orchestrator.
 
 **Task file format:**
 ```json
 {
   "id": "1706000000000",
-  "intent": "research",
-  "subject": "Research: me@example.com",
-  "body": "What is async programming?",
+  "subject": "What is async programming?",
+  "body": "",
+  "sender": "me@example.com",
   "reply_to": "me@example.com",
   "attachments": [],
   "created_at": "2026-01-26T12:00:00"
@@ -36,12 +31,21 @@ The poller is intentionally thin. It does one thing: watch Gmail and create task
 
 ### 2. The Brain: Orchestrator (`src/orchestrator.py`)
 
-The orchestrator is the central router. It watches the `inputs/` folder and dispatches tasks to the right handler.
+The orchestrator is the central router. It watches the `inputs/` folder, classifies intent using Gemini, and dispatches tasks to the right handler.
+
+**Intent Classification:**
+When a task arrives, `classify_intent()` sends the subject and body to Gemini, which returns:
+- Intent type (schedule, research, calendar_query, reminder, status, help)
+- Summary of what the user wants
+- Extracted data (e.g., reminder time and message)
 
 **Handlers:**
-- `handle_schedule()` → Parse with Gemini, create calendar event
-- `handle_research()` → Query Gemini, email response
-- `handle_calendar_query()` → Fetch events, query Gemini, email response
+- `handle_schedule()` -> Create calendar event
+- `handle_research()` -> Query Gemini with web search, email response
+- `handle_calendar_query()` -> Fetch events, query Gemini, email response
+- `handle_status()` -> Generate health report, email response
+- `handle_reminder()` -> Schedule with threading.Timer, send confirmation
+- `handle_help()` -> Answer questions about the system
 
 Each handler can use any combination of:
 - Gemini for reasoning
@@ -50,10 +54,9 @@ Each handler can use any combination of:
 
 **Adding new handlers:**
 
-1. Add a new intent in `src/poller.py`:
+1. Add the new intent to `classify_intent()` prompt:
 ```python
-elif subject_lower.startswith("todo:"):
-    return "todo", reply_to
+- "todo": Manage todo items (add, list, complete tasks)
 ```
 
 2. Add a handler in `src/orchestrator.py`:

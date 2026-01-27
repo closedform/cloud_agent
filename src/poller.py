@@ -72,42 +72,32 @@ def save_attachments(msg, task_id: str) -> list:
     return attachments
 
 
-def parse_intent(subject: str) -> tuple[str, str]:
-    """Parse subject line to determine intent and extract metadata.
-
-    Returns: (intent_type, metadata)
-    - "research", email_address
-    - "calendar_query", email_address
-    - "status", email_address
-    - "schedule", ""
-    - "unknown", ""
-    """
-    subject_lower = subject.lower()
-
-    if subject_lower.startswith("research:"):
-        reply_to = subject[9:].strip()
-        return "research", reply_to
-    elif subject_lower.startswith("calendar:"):
-        reply_to = subject[9:].strip()
-        return "calendar_query", reply_to
-    elif subject_lower.startswith("status:"):
-        reply_to = subject[7:].strip()
-        return "status", reply_to
-    elif any(kw in subject_lower for kw in ["schedule", "appointment"]):
-        return "schedule", ""
-    else:
-        return "unknown", ""
+def extract_reply_to(subject: str) -> str:
+    """Extract reply-to email from subject if present (e.g., 'Research: me@example.com')."""
+    # Check for common patterns where email follows a colon
+    if ":" in subject:
+        after_colon = subject.split(":", 1)[1].strip()
+        # Check if first word looks like an email
+        first_word = after_colon.split()[0] if after_colon.split() else ""
+        if "@" in first_word and "." in first_word:
+            return first_word
+    return ""
 
 
-def create_task(intent: str, body: str, subject: str, reply_to: str, attachments: list) -> str:
+def create_task(subject: str, body: str, sender: str, attachments: list) -> str:
     """Create a task file in the inputs directory."""
     task_id = str(int(time.time() * 1000))
 
+    # Try to extract reply_to from subject (e.g., "Research: me@example.com")
+    reply_to = extract_reply_to(subject)
+    if not reply_to:
+        reply_to = sender
+
     task = {
         "id": task_id,
-        "intent": intent,
         "subject": subject,
         "body": body,
+        "sender": sender,
         "reply_to": reply_to,
         "attachments": attachments,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -150,13 +140,6 @@ def process_emails():
 
                         print(f"Received: {subject}")
 
-                        # Parse intent
-                        intent, reply_to = parse_intent(subject)
-
-                        if intent == "unknown":
-                            print(f"  -> Unknown intent, skipping")
-                            continue
-
                         # Get body
                         body = get_email_body(msg)
 
@@ -166,9 +149,9 @@ def process_emails():
                         # Save attachments if any
                         attachments = save_attachments(msg, task_id)
 
-                        # Create task file
-                        create_task(intent, body, subject, reply_to, attachments)
-                        print(f"  -> Created task: {intent}")
+                        # Create task file (orchestrator will classify intent)
+                        create_task(subject, body, sender, attachments)
+                        print(f"  -> Created task")
 
     except Exception as e:
         print(f"Email Error: {e}")

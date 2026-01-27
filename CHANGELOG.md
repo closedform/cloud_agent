@@ -7,18 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- AI-powered intent classification: Gemini parses natural language requests instead of rigid subject formats
+- Status command: check agent health, API connectivity, and recent tasks
+- Reminder feature: set reminders that fire at scheduled times using threading.Timer
+- Help feature: ask the agent about its own capabilities
+- Separate research model (gemini-2.5-flash) for free Google Search grounding
+
 ### Changed
 
 - Refactored to flexible orchestrator architecture
-- Poller is now thin: parses emails, creates task files in inputs/
-- Orchestrator is the central brain: processes all task types
-- Extracted email sending to src/clients/email.py
-
-### Added
-
-- Research feature: email with subject "Research: <email>" and query in body
-- Calendar query feature: email with subject "Calendar: <email>" and question in body
-- Task-based queue system (JSON files in inputs/ folder)
+- Poller is now ultra-thin: just extracts email data and creates task files
+- Orchestrator classifies intent with Gemini, then routes to handlers
+- Reminders use threading.Timer for precise scheduling (no polling)
+- Default poll interval changed to 60 seconds (was 1800)
 
 ## [0.1.0] - 2025-01-26
 
@@ -32,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for recurring events via RRULE
 - Multi-calendar support with fuzzy name matching
 - Image and text input processing
+- Research feature with web search
+- Calendar query feature
+- Task-based queue system (JSON files in inputs/ folder)
 - Deployment guide for GCP free tier (e2-micro)
 - Tutorial documentation with architecture overview
 

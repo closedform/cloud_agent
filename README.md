@@ -31,6 +31,8 @@ An autonomous agent that runs on Google's free infrastructure. It listens for co
    |         - schedule    -> Calendar API  |
    |         - research    -> Gemini -------+---> SMTP --> You
    |         - calendar_query -> Gemini ----+
+   |         - reminder    -> reminders.json +
+   |         - status      -> Health check --+
    |                                        |
    +----------------------------------------+
 ```
@@ -41,45 +43,57 @@ An autonomous agent that runs on Google's free infrastructure. It listens for co
 
 ## Commands
 
+The agent uses Gemini to understand your requests naturally. Just write what you want.
+
 ### Schedule Events
 
-Subject contains "schedule" or "appointment":
-
 ```
-Subject: Schedule dentist appointment
+Subject: Dentist appointment
 Body: Dr. Smith next Tuesday at 2pm, should take about an hour
 ```
 
 ### Research (with web search)
 
-Subject: `Research: <reply-email>`
-
 ```
-Subject: Research: me@example.com
-Body: What are the best practices for Python async programming?
+Subject: What are the best practices for Python async?
+Body: (optional extra context)
 ```
 
 Uses Gemini 2.5 Flash with Google Search grounding (free tier) for up-to-date information.
 
 ### Calendar Query
 
-Subject: `Calendar: <reply-email>`
+```
+Subject: What do I have this week?
+Body: (optional)
+```
+
+### Reminders
 
 ```
-Subject: Calendar: me@example.com
-Body: What do I have this week?
+Subject: Remind me to meet with Einstein tomorrow at 3pm
+Body: (optional)
 ```
+
+You'll get a confirmation email, then the reminder at the scheduled time.
 
 ### Status Check
 
-Subject: `Status: <reply-email>`
-
 ```
-Subject: Status: me@example.com
-Body: (anything or empty)
+Subject: Status
+Body: (optional)
 ```
 
 Returns agent configuration, API status, and recent task history.
+
+### Help
+
+```
+Subject: What can you do?
+Body: (optional)
+```
+
+Ask the agent about its capabilities.
 
 ## Quick Start
 
