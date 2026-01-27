@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reminder feature: set reminders that fire at scheduled times using threading.Timer
 - Help feature: ask the agent about its own capabilities
 - Separate research model (gemini-2.5-flash) for free Google Search grounding
+- Centralized configuration (`src/config.py`) with `@lru_cache` for single `load_dotenv()` call
+- Atomic task file writes (`src/task_io.py`) to prevent race conditions
+- Typed Task and Reminder models (`src/models/task.py`) with validation
+- Handler registry with `@register_handler` decorator (`src/handlers/base.py`)
+- Modular handlers in `src/handlers/` directory (schedule, research, calendar_query, status, reminder, help)
+- Service factory (`src/services.py`) for explicit service initialization
+- Calendar CLI (`src/cli/calendar_cli.py`) separated from library code
 
 ### Changed
 
@@ -22,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Orchestrator classifies intent with Gemini, then routes to handlers
 - Reminders use threading.Timer for precise scheduling (no polling)
 - Default poll interval changed to 60 seconds (was 1800)
+- Default model changed to gemini-3-flash-preview
+- Removed import-time side effects: `import src.orchestrator` no longer calls APIs or exits
+- Email client now accepts credentials as parameters instead of reading from env
+- Calendar client now accepts Config object for path resolution
+- All paths anchored to project root (found via pyproject.toml)
 
 ## [0.1.0] - 2025-01-26
 

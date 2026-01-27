@@ -4,40 +4,32 @@ Watches Gmail for incoming commands, parses intent, and drops task files
 for the orchestrator to process.
 """
 
-import os
-import time
-import json
 import email
 import email.utils
 import imaplib
+import time
+import uuid
 from email.header import decode_header
-from pathlib import Path
-from dotenv import load_dotenv
+from email.message import Message
 
-load_dotenv()
-
-# Configuration
-EMAIL_USER = os.getenv("EMAIL_USER")
-EMAIL_PASS = os.getenv("EMAIL_PASS")
-allowed_senders_env = os.getenv("ALLOWED_SENDERS", "")
-ALLOWED_SENDERS = [s.strip() for s in allowed_senders_env.split(",") if s.strip()]
-POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "60"))
-
-IMAP_SERVER = "imap.gmail.com"
-INPUT_DIR = Path("inputs")
+from src.config import Config, get_config
+from src.models import Task
+from src.task_io import write_task_atomic
 
 
-def connect_imap():
-    mail = imaplib.IMAP4_SSL(IMAP_SERVER)
-    mail.login(EMAIL_USER, EMAIL_PASS)
+def connect_imap(config: Config) -> imaplib.IMAP4_SSL:
+    """Connect to IMAP server and login."""
+    mail = imaplib.IMAP4_SSL(config.imap_server)
+    mail.login(config.email_user, config.email_pass)
     return mail
 
 
 def clean_filename(filename: str) -> str:
+    """Sanitize filename for filesystem safety."""
     return "".join([c for c in filename if c.isalpha() or c.isdigit() or c in "._-"])
 
 
-def get_email_body(msg) -> str:
+def get_email_body(msg: Message) -> str:
     """Extract plain text body from email message."""
     body = ""
     if msg.is_multipart():
@@ -45,82 +37,98 @@ def get_email_body(msg) -> str:
             content_type = part.get_content_type()
             content_disposition = str(part.get("Content-Disposition"))
             if content_type == "text/plain" and "attachment" not in content_disposition:
-                body = part.get_payload(decode=True).decode()
+                payload = part.get_payload(decode=True)
+                if payload:
+                    body = payload.decode()
                 break
     else:
-        body = msg.get_payload(decode=True).decode()
+        payload = msg.get_payload(decode=True)
+        if payload:
+            body = payload.decode()
     return body
 
 
-def save_attachments(msg, task_id: str) -> list:
+def save_attachments(msg: Message, task_id: str, config: Config) -> list[str]:
     """Save email attachments and return list of filenames."""
     attachments = []
     for part in msg.walk():
-        if part.get_content_maintype() == 'multipart':
+        if part.get_content_maintype() == "multipart":
             continue
-        if part.get('Content-Disposition') is None:
+        if part.get("Content-Disposition") is None:
             continue
 
         filename = part.get_filename()
         if filename:
             safe_name = f"{task_id}_{clean_filename(filename)}"
-            filepath = INPUT_DIR / safe_name
-            with open(filepath, "wb") as f:
-                f.write(part.get_payload(decode=True))
-            attachments.append(safe_name)
-            print(f"  Saved attachment: {safe_name}")
+            filepath = config.input_dir / safe_name
+            payload = part.get_payload(decode=True)
+            if payload:
+                with open(filepath, "wb") as f:
+                    f.write(payload)
+                attachments.append(safe_name)
+                print(f"  Saved attachment: {safe_name}")
     return attachments
 
 
 def extract_reply_to(subject: str) -> str:
-    """Extract reply-to email from subject if present (e.g., 'Research: me@example.com')."""
-    # Check for common patterns where email follows a colon
+    """Extract reply-to email from subject if present.
+
+    Handles patterns like 'Research: me@example.com'
+    """
     if ":" in subject:
         after_colon = subject.split(":", 1)[1].strip()
-        # Check if first word looks like an email
         first_word = after_colon.split()[0] if after_colon.split() else ""
         if "@" in first_word and "." in first_word:
             return first_word
     return ""
 
 
-def create_task(subject: str, body: str, sender: str, attachments: list) -> str:
-    """Create a task file in the inputs directory."""
-    task_id = str(int(time.time() * 1000))
+def generate_task_id() -> str:
+    """Generate a unique task ID using UUID4."""
+    return uuid.uuid4().hex
 
+
+def create_task(
+    task_id: str,
+    subject: str,
+    body: str,
+    sender: str,
+    attachments: list[str],
+    config: Config,
+) -> str:
+    """Create a task file in the inputs directory."""
     # Try to extract reply_to from subject (e.g., "Research: me@example.com")
     reply_to = extract_reply_to(subject)
     if not reply_to:
         reply_to = sender
 
-    task = {
-        "id": task_id,
-        "subject": subject,
-        "body": body,
-        "sender": sender,
-        "reply_to": reply_to,
-        "attachments": attachments,
-        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S")
-    }
+    task = Task(
+        id=task_id,
+        subject=subject,
+        body=body,
+        sender=sender,
+        reply_to=reply_to,
+        attachments=attachments,
+    )
 
-    task_file = INPUT_DIR / f"task_{task_id}.json"
-    with open(task_file, "w") as f:
-        json.dump(task, f, indent=2)
+    task_file = config.input_dir / f"task_{task.id}.json"
+    write_task_atomic(task.to_dict(), task_file)
 
-    return task_id
+    return task.id
 
 
-def process_emails():
+def process_emails(config: Config) -> None:
     """Check for new emails and create tasks."""
-    if not ALLOWED_SENDERS:
+    if not config.allowed_senders:
         print("Warning: No ALLOWED_SENDERS configured.")
         return
 
+    mail = None
     try:
-        mail = connect_imap()
+        mail = connect_imap(config)
         mail.select("inbox")
 
-        for sender in ALLOWED_SENDERS:
+        for sender in config.allowed_senders:
             status, messages = mail.search(None, f'(UNSEEN FROM "{sender}")')
             email_ids = messages[0].split()
 
@@ -134,42 +142,48 @@ def process_emails():
                 for response_part in msg_data:
                     if isinstance(response_part, tuple):
                         msg = email.message_from_bytes(response_part[1])
-                        subject = decode_header(msg["Subject"])[0][0]
-                        if isinstance(subject, bytes):
-                            subject = subject.decode()
+                        subject_header = decode_header(msg["Subject"])[0][0]
+                        if isinstance(subject_header, bytes):
+                            subject = subject_header.decode()
+                        else:
+                            subject = subject_header
 
                         print(f"Received: {subject}")
 
                         # Get body
                         body = get_email_body(msg)
 
-                        # Generate task ID for attachments
-                        task_id = str(int(time.time() * 1000))
+                        # Generate task ID (used for both attachments and task file)
+                        task_id = generate_task_id()
 
                         # Save attachments if any
-                        attachments = save_attachments(msg, task_id)
+                        attachments = save_attachments(msg, task_id, config)
 
                         # Create task file (orchestrator will classify intent)
-                        create_task(subject, body, sender, attachments)
-                        print(f"  -> Created task")
+                        create_task(task_id, subject, body, sender, attachments, config)
+                        print(f"  -> Created task {task_id}")
 
     except Exception as e:
         print(f"Email Error: {e}")
     finally:
-        try:
-            mail.close()
-            mail.logout()
-        except:
-            pass
+        if mail:
+            try:
+                mail.close()
+                mail.logout()
+            except Exception:
+                pass
 
 
-def main():
-    print(f"Poller started (interval: {POLL_INTERVAL}s)...")
-    INPUT_DIR.mkdir(exist_ok=True)
+def main() -> None:
+    """Main entry point for the poller."""
+    config = get_config()
+
+    print(f"Poller started (interval: {config.poll_interval}s)...")
+    config.input_dir.mkdir(exist_ok=True)
 
     while True:
-        process_emails()
-        time.sleep(POLL_INTERVAL)
+        process_emails(config)
+        time.sleep(config.poll_interval)
 
 
 if __name__ == "__main__":

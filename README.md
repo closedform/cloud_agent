@@ -7,38 +7,35 @@ An autonomous agent that runs on Google's free infrastructure. It listens for co
 ## What You Get
 
 - **Always-on AI agent** - Runs 24/7 on GCP's free tier (e2-micro VM)
-- **Gemini 3 Flash** - Google's multimodal model, free tier available
+- **Gemini 3 Flash Preview** - Google's multimodal model, free tier available
 - **Email interface** - Send commands from anywhere, no app needed
-- **Extensible architecture** - Add new capabilities easily
+- **Extensible architecture** - Add new capabilities with the `@register_handler` decorator
 
 **Total monthly cost: $0.00** (within free tier limits)
 
 ## Architecture
 
 ```
-              (inbound)                              (outbound)
-+------+    email    +-------+   IMAP   +---------+
-| You  | ---------> | Gmail | -------> | Poller  |
-+------+            +-------+          +---------+
-   ^                                        |
-   |                                        | creates task files
-   |                                        v
-   |                                   +-------------+
-   |                                   | Orchestrator |
-   |                                   +-------------+
-   |                                        |
-   |         routes by intent:              |
-   |         - schedule    -> Calendar API  |
-   |         - research    -> Gemini -------+---> SMTP --> You
-   |         - calendar_query -> Gemini ----+
-   |         - reminder    -> reminders.json +
-   |         - status      -> Health check --+
-   |                                        |
-   +----------------------------------------+
+You --> [Email] --> Gmail --> [IMAP] --> Poller
+                                           |
+                                           v
+                                      Orchestrator --[Gemini]--> classify intent
+                                           |
+              +----------------------------+----------------------------+
+              |              |              |              |             |
+          schedule       research     calendar_query   reminder      status
+              |              |              |              |             |
+         Calendar API   Gemini+Search   Gemini        Timer         Health
+              |              |              |              |             |
+              +--------------+--------------+--------------+-------------+
+                                           |
+                                           v
+                                      [SMTP] --> You
 ```
 
-**Poller** (`src/poller.py`) - Watches Gmail, parses intent, drops task files
-**Orchestrator** (`src/orchestrator.py`) - Processes tasks, routes to handlers
+**Poller** (`src/poller.py`) - Watches Gmail, creates task files (atomic writes)
+**Orchestrator** (`src/orchestrator.py`) - Classifies intent, routes to handlers
+**Handlers** (`src/handlers/`) - Modular handlers for each intent type
 **Clients** (`src/clients/`) - Calendar, email, and future integrations
 
 ## Commands
@@ -116,7 +113,7 @@ cp .env.example .env
 
 - **Gemini API Key**: Free from [aistudio.google.com](https://aistudio.google.com)
 - **Gmail App Password**: From [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
-- **Google Calendar**: Run `uv run python -m src.clients.calendar --list-calendars` to authorize
+- **Google Calendar**: Run `uv run python -m src.cli.calendar_cli --list-calendars` to authorize
 
 ### Run Locally
 
@@ -144,16 +141,32 @@ tmux new -s agent -d 'uv run python -m src.orchestrator' \; split-window -h 'uv 
 ```
 cloud_agent/
 ├── src/
-│   ├── orchestrator.py      # Brain: routes tasks to handlers
-│   ├── poller.py            # Ears: parses email, creates tasks
-│   └── clients/
-│       ├── calendar.py      # Google Calendar operations
-│       └── email.py         # SMTP email sending
+│   ├── config.py            # Centralized configuration
+│   ├── services.py          # Service factory (Gemini, Calendar)
+│   ├── task_io.py           # Atomic file I/O
+│   ├── orchestrator.py      # Brain: classifies intent, routes to handlers
+│   ├── poller.py            # Ears: watches email, creates tasks
+│   ├── models/
+│   │   └── task.py          # Task and Reminder dataclasses
+│   ├── handlers/
+│   │   ├── base.py          # Handler registry (@register_handler)
+│   │   ├── schedule.py      # Calendar event creation
+│   │   ├── research.py      # Web research
+│   │   ├── calendar_query.py
+│   │   ├── reminder.py
+│   │   ├── status.py
+│   │   └── help.py
+│   ├── clients/
+│   │   ├── calendar.py      # Google Calendar operations
+│   │   └── email.py         # SMTP email sending
+│   └── cli/
+│       └── calendar_cli.py  # Calendar CLI tool
 ├── docs/
 │   ├── deployment.md        # GCP deployment guide
 │   └── tutorial.md          # Architecture deep-dive
 ├── inputs/                  # Task queue (created at runtime)
 ├── processed/               # Completed tasks (created at runtime)
+├── failed/                  # Tasks that failed after max retries
 ├── .env.example
 ├── pyproject.toml
 └── README.md
@@ -164,8 +177,19 @@ cloud_agent/
 Add new capabilities:
 
 1. Create a client in `src/clients/` (e.g., `tasks.py`, `notes.py`)
-2. Add intent parsing in `src/poller.py`
-3. Add handler in `src/orchestrator.py`
+2. Create a handler in `src/handlers/` with `@register_handler("your_intent")`
+3. Add the intent to `classify_intent()` in `src/orchestrator.py`
+
+Example handler:
+```python
+# src/handlers/todo.py
+from src.handlers.base import register_handler
+
+@register_handler("todo")
+def handle_todo(task, config, services):
+    # Your logic here
+    pass
+```
 
 Ideas: task management, home automation, expense tracking, flight monitoring.
 

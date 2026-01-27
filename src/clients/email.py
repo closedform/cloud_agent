@@ -1,36 +1,51 @@
-"""Email client for sending responses via SMTP."""
+"""Email client for sending responses via SMTP.
 
-import os
+All configuration is passed as parameters to avoid import-time side effects.
+"""
+
 import smtplib
-from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from dotenv import load_dotenv
-
-load_dotenv()
-
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-EMAIL_USER = os.getenv("EMAIL_USER")
-EMAIL_PASS = os.getenv("EMAIL_PASS")
+from email.mime.text import MIMEText
 
 
-def send_email(to_address: str, subject: str, body: str) -> bool:
-    """Send an email via SMTP."""
-    if not EMAIL_USER or not EMAIL_PASS:
-        print("Error: EMAIL_USER or EMAIL_PASS not configured")
+def send_email(
+    to_address: str,
+    subject: str,
+    body: str,
+    email_user: str,
+    email_pass: str,
+    smtp_server: str = "smtp.gmail.com",
+    smtp_port: int = 587,
+) -> bool:
+    """Send an email via SMTP.
+
+    Args:
+        to_address: Recipient email address.
+        subject: Email subject line.
+        body: Email body text.
+        email_user: SMTP username/sender address.
+        email_pass: SMTP password/app password.
+        smtp_server: SMTP server hostname.
+        smtp_port: SMTP server port.
+
+    Returns:
+        True if email was sent successfully, False otherwise.
+    """
+    if not email_user or not email_pass:
+        print("Error: email_user or email_pass not provided")
         return False
 
     try:
         msg = MIMEMultipart()
-        msg["From"] = EMAIL_USER
+        msg["From"] = email_user
         msg["To"] = to_address
         msg["Subject"] = subject
         msg.attach(MIMEText(body, "plain"))
 
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
             server.starttls()
-            server.login(EMAIL_USER, EMAIL_PASS)
-            server.sendmail(EMAIL_USER, to_address, msg.as_string())
+            server.login(email_user, email_pass)
+            server.sendmail(email_user, to_address, msg.as_string())
 
         print(f"Email sent to {to_address}")
         return True

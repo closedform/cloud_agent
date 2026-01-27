@@ -61,7 +61,15 @@ cd cloud_agent
 uv sync
 ```
 
-## 5. Run the Agent
+## 5. Set Up Google Calendar
+
+Authorize the calendar CLI (this creates `token.json`):
+
+```bash
+uv run python -m src.cli.calendar_cli --list-calendars
+```
+
+## 6. Run the Agent
 
 ```bash
 # Install tmux for persistent sessions
@@ -98,7 +106,7 @@ tmux kill-session -t agent
 tmux new -s agent -d 'uv run python -m src.orchestrator' \; split-window -h 'uv run python -m src.poller'
 ```
 
-## 6. Configuration (.env)
+## 7. Configuration (.env)
 1.  **Get an App Password**: Go to [Google Account Security](https://myaccount.google.com/security) > 2-Step Verification > App Passwords. Create one named "PersonalAgent".
 2.  **Edit .env on Server**:
     ```bash
@@ -108,10 +116,20 @@ tmux new -s agent -d 'uv run python -m src.orchestrator' \; split-window -h 'uv 
     ```bash
     # -- Brain --
     GEMINI_API_KEY="AIzaSy..."   <-- Paste your key from aistudio.google.com
+    GEMINI_MODEL="gemini-3-flash-preview"
+    GEMINI_RESEARCH_MODEL="gemini-2.5-flash"
 
     # -- Email --
     EMAIL_USER="your.bot.email@gmail.com"
     EMAIL_PASS="xxxx xxxx xxxx xxxx"   <-- Your App Password
     ALLOWED_SENDERS="your.personal@gmail.com"
-    POLL_INTERVAL=1800  # Check every 30 minutes
+    POLL_INTERVAL=60  # Check every minute
+
+    # -- Optional (defaults work for Gmail) --
+    # IMAP_SERVER="imap.gmail.com"
+    # SMTP_SERVER="smtp.gmail.com"
+    # SMTP_PORT=587
+    # TIMEZONE="America/New_York"
+    # DEFAULT_CALENDAR="primary"
+    # MAX_TASK_RETRIES=3
     ```

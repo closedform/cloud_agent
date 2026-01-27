@@ -13,7 +13,6 @@ production.env
 
 # Local notes
 SECRET.md
-GUIDE.md
 
 # Google Credentials (CRITICAL)
 credentials.json
@@ -23,5 +22,5 @@ client_secret_*.json
 # Data
 inputs/
 processed/
+failed/
 *.zip
-GUIDE.md
