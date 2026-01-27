@@ -19,11 +19,11 @@ def get_service():
     Authenticates with Google and returns the Calendar service.
     """
     creds = None
-    
-    # Get the directory where this script is located
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    token_path = os.path.join(script_dir, "token.json")
-    creds_path = os.path.join(script_dir, "credentials.json")
+
+    # Get the project root directory (two levels up from this file)
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    token_path = os.path.join(project_root, "token.json")
+    creds_path = os.path.join(project_root, "credentials.json")
     
     # The file token.json stores the user's access and refresh tokens, and is
     # created automatically when the authorization flow completes for the first
