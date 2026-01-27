@@ -11,6 +11,7 @@ import shutil
 from pathlib import Path
 from google import genai
 from google.genai import types
+from google.genai.types import GenerateContentConfig, GoogleSearch, Tool
 from dotenv import load_dotenv
 
 from src.clients import calendar as calendar_client
@@ -123,12 +124,15 @@ def handle_research(task: dict):
 
 Query: {query}
 
-Provide a well-structured response with key facts and insights."""
+Use web search to find current, accurate information. Provide a well-structured response with key facts and insights."""
 
     try:
         response = client.models.generate_content(
             model=GEMINI_MODEL,
-            contents=[prompt]
+            contents=[prompt],
+            config=GenerateContentConfig(
+                tools=[Tool(google_search=GoogleSearch())]
+            )
         )
 
         result = response.text

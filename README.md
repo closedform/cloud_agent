@@ -50,7 +50,7 @@ Subject: Schedule dentist appointment
 Body: Dr. Smith next Tuesday at 2pm, should take about an hour
 ```
 
-### Research
+### Research (with web search)
 
 Subject: `Research: <reply-email>`
 
@@ -58,6 +58,8 @@ Subject: `Research: <reply-email>`
 Subject: Research: me@example.com
 Body: What are the best practices for Python async programming?
 ```
+
+Uses Gemini with Google Search grounding for up-to-date information.
 
 ### Calendar Query
 
