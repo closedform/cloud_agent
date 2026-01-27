@@ -28,10 +28,10 @@ The agent parses it with Gemini, creates the event, and routes it to the right c
 
 ### Research Mode
 
-Email with subject `research: <email>` and your question in the body. The agent will research and send the response to the specified email.
+Email with subject `Research: <email>` (case-insensitive) and your question in the body. The agent will research and send the response to the specified email.
 
 Example:
-- Subject: `research: me@example.com`
+- Subject: `Research: me@example.com`
 - Body: `What are the best practices for Python async programming?`
 
 ## Quick Start
