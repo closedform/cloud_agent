@@ -22,6 +22,7 @@ load_dotenv()
 # Configuration
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash")
+GEMINI_RESEARCH_MODEL = os.getenv("GEMINI_RESEARCH_MODEL", "gemini-2.5-flash")  # Has free Google Search
 
 INPUT_DIR = Path("inputs")
 PROCESSED_DIR = Path("processed")
@@ -127,8 +128,9 @@ Query: {query}
 Use web search to find current, accurate information. Provide a well-structured response with key facts and insights."""
 
     try:
+        # Use research model (2.5 Flash) for free Google Search grounding
         response = client.models.generate_content(
-            model=GEMINI_MODEL,
+            model=GEMINI_RESEARCH_MODEL,
             contents=[prompt],
             config=GenerateContentConfig(
                 tools=[Tool(google_search=GoogleSearch())]
@@ -143,7 +145,7 @@ Use web search to find current, accurate information. Provide a well-structured 
             subject=f"Re: {subject_line}",
             body=result
         )
-        print(f"  Response sent to {reply_to}")
+        print(f"  Response sent to {reply_to} (model: {GEMINI_RESEARCH_MODEL})")
 
     except Exception as e:
         print(f"  Research error: {e}")

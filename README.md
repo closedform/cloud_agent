@@ -59,7 +59,7 @@ Subject: Research: me@example.com
 Body: What are the best practices for Python async programming?
 ```
 
-Uses Gemini with Google Search grounding for up-to-date information.
+Uses Gemini 2.5 Flash with Google Search grounding (free tier) for up-to-date information.
 
 ### Calendar Query
 
