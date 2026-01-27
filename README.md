@@ -83,6 +83,28 @@ This is a starting point. The architecture is intentionally simple - add new "to
 
 Ideas: task management, home automation, expense tracking, flight monitoring.
 
+### Deploying Updates
+
+Once your VM is set up, deploy changes with git:
+
+```bash
+# On your local machine: make changes, commit, push
+git add . && git commit -m "Add new feature" && git push
+
+# On your VM: pull and restart
+cd ~/cloud_agent
+git pull
+uv sync
+tmux kill-session -t agent
+tmux new -s agent -d 'uv run python orchestrator.py' \; split-window -h 'uv run python email_poller.py'
+```
+
+Or as a one-liner over SSH:
+
+```bash
+ssh user@YOUR_VM_IP "cd ~/cloud_agent && git pull && source ~/.local/bin/env && uv sync && tmux kill-session -t agent; tmux new -s agent -d 'source ~/.local/bin/env && cd ~/cloud_agent && uv run python orchestrator.py' \; split-window -h 'source ~/.local/bin/env && cd ~/cloud_agent && uv run python email_poller.py'"
+```
+
 ## Documentation
 
 - [TUTORIAL.md](TUTORIAL.md) - Architecture deep-dive and philosophy
