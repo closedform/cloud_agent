@@ -76,9 +76,8 @@ def process_email():
                         # Routing Logic
                         if subject_lower.startswith("research:"):
                             print(f"  -> Routing to Research Agent")
-                            query = subject[9:].strip()  # Remove "research:" prefix
-                            sender_email = email.utils.parseaddr(msg["From"])[1]
-                            process_research_email(query, msg, sender_email)
+                            reply_to = subject[9:].strip()  # Email to reply to
+                            process_research_email(msg, reply_to)
                         elif any(keyword in subject_lower for keyword in ["calendar", "schedule", "appointment"]):
                             print(f"  -> Routing to Calendar Agent")
                             process_calendar_email(msg, subject)
@@ -149,31 +148,33 @@ def send_email(to_address, subject, body):
         print(f"Failed to send email: {e}")
         return False
 
-def process_research_email(query, msg, sender_email):
+def process_research_email(msg, reply_to):
     """Research a topic using Gemini and email the response."""
     if not gemini_client:
         print("Error: GEMINI_API_KEY not configured")
         return
 
-    # Also include email body as additional context
-    body_context = ""
+    # Get query from email body
+    query = ""
     if msg.is_multipart():
         for part in msg.walk():
             content_type = part.get_content_type()
             content_disposition = str(part.get("Content-Disposition"))
             if content_type == "text/plain" and "attachment" not in content_disposition:
-                body_context = part.get_payload(decode=True).decode()
+                query = part.get_payload(decode=True).decode()
                 break
     else:
-        body_context = msg.get_payload(decode=True).decode()
+        query = msg.get_payload(decode=True).decode()
 
-    print(f"Researching: {query}")
+    if not query.strip():
+        print("Error: No query in email body")
+        return
+
+    print(f"Researching: {query[:100]}...")
 
     prompt = f"""You are a research assistant. Answer the following query thoroughly and concisely.
 
 Query: {query}
-
-{"Additional context from email body: " + body_context if body_context.strip() else ""}
 
 Provide a well-structured response with key facts and insights."""
 
@@ -184,18 +185,20 @@ Provide a well-structured response with key facts and insights."""
         )
 
         result = response.text
-        print(f"Research complete, sending response...")
+        print(f"Research complete, sending response to {reply_to}")
 
+        # Use first line of query as subject (truncated)
+        subject_line = query.strip().split('\n')[0][:50]
         send_email(
-            to_address=sender_email,
-            subject=f"Re: Research: {query}",
+            to_address=reply_to,
+            subject=f"Re: {subject_line}",
             body=result
         )
     except Exception as e:
         print(f"Research error: {e}")
         send_email(
-            to_address=sender_email,
-            subject=f"Re: Research: {query}",
+            to_address=reply_to,
+            subject="Research Error",
             body=f"Sorry, I encountered an error while researching: {e}"
         )
 
