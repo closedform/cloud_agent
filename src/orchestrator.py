@@ -7,7 +7,7 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
-import calendar_client
+from src.clients import calendar as calendar_client
 
 # Load Environment Variables
 load_dotenv()
@@ -139,7 +139,7 @@ def process_file(file_path):
             if not target_cal_id:
                 print(f"Calendar '{cal_name}' not found. Creating it...")
                 try:
-                    create_cmd = ["uv", "run", "calendar_client.py", "--create-calendar", event.get('calendar')]
+                    create_cmd = ["uv", "run", "python", "-m", "src.clients.calendar", "--create-calendar", event.get('calendar')]
                     subprocess.run(create_cmd, check=True, capture_output=True)
                     
                     service = calendar_client.get_service()
@@ -154,7 +154,7 @@ def process_file(file_path):
             
             # Ensure all args are strings, handling potential None values
             cmd = [
-                "uv", "run", "calendar_client.py",
+                "uv", "run", "python", "-m", "src.clients.calendar",
                 "--summary", str(event.get('summary', 'New Event')),
                 "--start", str(event.get('start', '')),
                 "--end", str(event.get('end', '')),

@@ -68,37 +68,47 @@ cp .env.example .env
 
 - **Gemini API Key**: Free from [aistudio.google.com](https://aistudio.google.com)
 - **Gmail App Password**: From [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
-- **Google Calendar**: Run `uv run python calendar_client.py --auth` to authorize
+- **Google Calendar**: Run `uv run python -m src.clients.calendar --auth` to authorize
 
 ### 3. Run locally (to test)
 
 ```bash
 # Terminal 1: The brain (processes tasks)
-uv run python orchestrator.py
+uv run python -m src.orchestrator
 
 # Terminal 2: The ears (listens for emails)
-uv run python email_poller.py
+uv run python -m src.poller
 ```
 
 ### 4. Deploy to the cloud
 
-Follow [DEPLOYMENT.md](DEPLOYMENT.md) to set up your free GCP VM. Takes about 15 minutes.
+Follow [docs/deployment.md](docs/deployment.md) to set up your free GCP VM.
 
 ## Project Structure
 
 ```
-orchestrator.py    # Brain: Gemini-powered task processor
-email_poller.py    # Ears: IMAP listener for commands
-calendar_client.py # Hands: Google Calendar operations
+cloud_agent/
+├── src/
+│   ├── orchestrator.py      # Brain: Gemini-powered task processor
+│   ├── poller.py            # Ears: IMAP listener for commands
+│   └── clients/
+│       └── calendar.py      # Hands: Google Calendar operations
+├── docs/
+│   ├── deployment.md        # Cloud deployment guide
+│   └── tutorial.md          # Architecture deep-dive
+├── .env.example
+├── pyproject.toml
+├── README.md
+└── CHANGELOG.md
 ```
 
 ## Extending the Agent
 
 This is a starting point. The architecture is intentionally simple - add new "tools" by:
 
-1. Writing a new client (like `calendar_client.py`)
-2. Adding tool calls to the orchestrator
-3. Updating the system prompt
+1. Writing a new client in `src/clients/`
+2. Adding routing logic to `src/poller.py`
+3. Updating the system prompt in `src/orchestrator.py`
 
 Ideas: task management, home automation, expense tracking, flight monitoring.
 
@@ -115,19 +125,13 @@ cd ~/cloud_agent
 git pull
 uv sync
 tmux kill-session -t agent
-tmux new -s agent -d 'uv run python orchestrator.py' \; split-window -h 'uv run python email_poller.py'
-```
-
-Or as a one-liner over SSH:
-
-```bash
-ssh user@YOUR_VM_IP "cd ~/cloud_agent && git pull && source ~/.local/bin/env && uv sync && tmux kill-session -t agent; tmux new -s agent -d 'source ~/.local/bin/env && cd ~/cloud_agent && uv run python orchestrator.py' \; split-window -h 'source ~/.local/bin/env && cd ~/cloud_agent && uv run python email_poller.py'"
+tmux new -s agent -d 'uv run python -m src.orchestrator' \; split-window -h 'uv run python -m src.poller'
 ```
 
 ## Documentation
 
-- [TUTORIAL.md](TUTORIAL.md) - Architecture deep-dive and philosophy
-- [DEPLOYMENT.md](DEPLOYMENT.md) - Step-by-step cloud deployment guide
+- [docs/tutorial.md](docs/tutorial.md) - Architecture deep-dive and philosophy
+- [docs/deployment.md](docs/deployment.md) - Step-by-step cloud deployment guide
 
 ## License
 

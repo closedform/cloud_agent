@@ -11,7 +11,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-import calendar_client
+from src.clients import calendar as calendar_client
 
 load_dotenv()
 
