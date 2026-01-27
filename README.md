@@ -126,7 +126,6 @@ ssh user@YOUR_VM_IP "cd ~/cloud_agent && git pull && source ~/.local/bin/env && 
 
 ## Documentation
 
-- [GUIDE.md](GUIDE.md) - Full tutorial and architecture overview
 - [TUTORIAL.md](TUTORIAL.md) - Architecture deep-dive and philosophy
 - [DEPLOYMENT.md](DEPLOYMENT.md) - Step-by-step cloud deployment guide
 
