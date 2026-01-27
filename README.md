@@ -40,10 +40,10 @@ Email with subject `Calendar: <email>` (case-insensitive) and your question in t
 
 Examples:
 - Subject: `Calendar: me@example.com`
-- Body: `When is the next test on samantha_school?`
+- Body: `When is my next dentist appointment?`
 
 - Subject: `Calendar: me@example.com`
-- Body: `What events do I have this week on bramantha?`
+- Body: `What events do I have this week on the work calendar?`
 
 ## Quick Start
 
