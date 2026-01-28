@@ -66,10 +66,8 @@ WORKFLOW:
 2. Use get_user_identity to personalize for known users
 3. Use recall_facts to check for relevant stored knowledge
 4. Use get_conversation_history for multi-turn context
-5. Delegate to the appropriate sub-agent
-6. Review the results returned via state
-7. If user mentioned new facts worth remembering, use remember_fact
-8. Send a friendly, well-formatted email response using send_email_response
+5. Delegate to the appropriate sub-agent (they will send the email response)
+6. If user mentioned new facts worth remembering, use remember_fact
 
 ROUTING GUIDELINES:
 - "schedule", "meeting", "appointment", "event" -> CalendarAgent
@@ -93,16 +91,9 @@ When the user sends a follow-up (e.g., "also eggs" after "add milk to groceries"
 2. Route to the same agent that handled the previous request
 3. Include context so the agent can continue appropriately
 
-RESPONSE FORMAT:
-- Be friendly and personalized when user identity is known
-- Format responses clearly with sections/lists when appropriate
-
-CRITICAL - EMAIL REQUIREMENT:
-You MUST call send_email_response() to deliver EVERY response. This is mandatory.
-- NEVER return a text response without calling send_email_response
-- After sub-agents return results, YOU must compose and send the email
-- The user only receives communication via email - if you don't call send_email_response, they get nothing
-- Your job is not complete until send_email_response has been called
+DIRECT RESPONSES:
+For simple queries that don't need a specialist (greetings, clarifications, general questions),
+you can respond directly using send_email_response.
 """
 
 
@@ -127,8 +118,8 @@ router_agent = Agent(
         recall_facts,
         list_facts_by_category,
         forget_fact,
-        # Response
-        send_email_response,  # Only RouterAgent sends emails
+        # Response (for direct responses without delegation)
+        send_email_response,
     ],
     sub_agents=[
         calendar_agent,

@@ -34,29 +34,28 @@ uv run pytest -k "test_add_todo"    # Run specific tests
 ```
 Email → IMAP Poller → Task File → ADK Orchestrator → RouterAgent (orchestrator)
                                          ↓                    ↓
-                               Session Store          Sub-agents return via state
-                               Memory Store                   ↓
-                                                    RouterAgent sends email
+                               Session Store          Sub-agents send emails directly
+                               Memory Store           (ADK hand-off model)
 ```
 
 **Agent Hierarchy** (`src/agents/`):
 
-RouterAgent is the **orchestrator** - it's the only agent that sends emails. Sub-agents return results via `output_key` state, which RouterAgent uses to compose the final response.
+RouterAgent is the **orchestrator** that routes requests to specialized sub-agents. Due to ADK's hand-off model, sub-agents send email responses directly after completing tasks. RouterAgent can also respond directly for simple queries.
 
 ```
-RouterAgent (orchestrator, sends emails, has memory)
-├── CalendarAgent → {calendar_results}
-├── PersonalDataAgent → {personal_data_results}
-├── AutomationAgent → {automation_results}
-├── ResearchAgent (sub-orchestrator) → {research_results}
-│   └── WebSearchAgent → {web_search_results}
-├── SystemAgent → {system_results}
-└── SystemAdminAgent → {system_admin_results}
+RouterAgent (orchestrator, has memory)
+├── CalendarAgent (sends email)
+├── PersonalDataAgent (sends email)
+├── AutomationAgent (sends email)
+├── ResearchAgent (sub-orchestrator, sends email)
+│   └── WebSearchAgent (returns to ResearchAgent)
+├── SystemAgent (sends email)
+└── SystemAdminAgent (sends email)
 ```
 
 **Agents**:
 
-- **RouterAgent** (`router.py`): Orchestrator that analyzes intent, delegates to specialists, and sends email responses. Has memory tools for persistent user facts.
+- **RouterAgent** (`router.py`): Orchestrator that analyzes intent and delegates to specialists. Has memory tools for persistent user facts. Can respond directly for simple queries.
 
 - **CalendarAgent** (`calendar_agent.py`): Schedules events, queries calendar, lists calendars.
 
@@ -139,9 +138,9 @@ _config = get_config()
 your_agent = Agent(
     name="YourAgent",
     model=_config.gemini_model,  # Use centralized config
-    instruction="Your agent's system prompt...",
-    tools=[your_tool_function],
-    output_key="your_results",  # Results flow back to RouterAgent via state
+    instruction="Your agent's system prompt... IMPORTANT: Call send_email_response after completing task.",
+    tools=[your_tool_function, send_email_response],  # Sub-agents send their own emails
+    output_key="your_results",
 )
 ```
 
@@ -149,11 +148,10 @@ your_agent = Agent(
    - Import the agent
    - Add to `sub_agents` list
    - Update routing guidelines in instruction
-   - Reference `{your_results}` state key in workflow documentation
 
 ## Key Design Decisions
 
-- **Orchestrator pattern**: RouterAgent is the sole email sender. Sub-agents return results via `output_key` state, allowing RouterAgent to compose and personalize responses.
+- **ADK hand-off pattern**: Due to ADK's design, when RouterAgent delegates to a sub-agent, the sub-agent completes the entire interaction including sending the email response. RouterAgent's loop ends when the sub-agent produces output.
 - **Sub-orchestrators**: ResearchAgent orchestrates WebSearchAgent, enabling multi-step research with follow-up queries before synthesizing results.
 - **Persistent memory**: RouterAgent has tools to store/recall user facts across conversations (e.g., "Has cat named Oliver", "Uses Manhattan Vet").
 - **Multi-turn conversations**: Thread ID from normalized subject + sender enables conversational context across email replies.

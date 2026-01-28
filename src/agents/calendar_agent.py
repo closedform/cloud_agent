@@ -1,6 +1,6 @@
 """CalendarAgent - handles calendar scheduling and queries.
 
-Returns results to RouterAgent for email delivery.
+Sends email responses directly after completing tasks.
 """
 
 from google.adk import Agent

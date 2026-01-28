@@ -1,6 +1,6 @@
 """SystemAgent - handles status and help requests.
 
-Returns results to RouterAgent for email delivery.
+Sends email responses directly after completing tasks.
 """
 
 from datetime import datetime

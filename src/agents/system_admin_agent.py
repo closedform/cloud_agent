@@ -5,7 +5,7 @@ Provides safe, scoped access to system operations including:
 - System monitoring (disk, memory, processes)
 - Code maintenance (git, tests, dependencies)
 
-Returns results to RouterAgent for email delivery.
+Sends email responses directly after completing tasks.
 """
 
 from google.adk import Agent

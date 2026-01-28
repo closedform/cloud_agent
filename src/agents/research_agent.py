@@ -1,7 +1,7 @@
 """ResearchAgent - orchestrates research tasks including web search.
 
-Acts as a sub-orchestrator that dispatches WebSearchAgent and summarizes findings.
-Returns results to RouterAgent for email delivery.
+Acts as a sub-orchestrator that dispatches WebSearchAgent and synthesizes findings.
+Sends email responses directly after completing tasks.
 """
 
 from google.adk import Agent
@@ -41,7 +41,7 @@ Orchestration workflow:
 3. Review the summary WebSearchAgent returns
 4. If needed, ask for follow-up searches to fill gaps
 5. Synthesize all findings into a comprehensive response
-6. Return the final response to RouterAgent
+6. Send the email response to the user
 
 You are the orchestrator - think critically about what information is needed and whether the search results adequately answer the question.
 
