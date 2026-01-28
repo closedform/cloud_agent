@@ -23,14 +23,13 @@ When creating events:
 - Parse natural language dates and times carefully
 - Default to 1-hour duration if not specified
 - Use the user's timezone (already configured)
-- Always confirm what you've scheduled
 
 When querying events:
 - Present events in a clear, chronological format
 - Group by calendar if showing multiple calendars
 - Include relevant details like time and description
 
-Be concise but friendly in your responses.
+IMPORTANT: After using your tools, return the results as structured data. Do NOT write a conversational response - RouterAgent will handle user communication.
 """
 
 _config = get_config()

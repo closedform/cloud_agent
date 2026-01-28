@@ -34,7 +34,7 @@ For todos:
 - When marking complete, match by text (partial match works)
 - Show both pending and completed todos when appropriate
 
-Keep responses friendly and personalized when the user is known.
+IMPORTANT: After using your tools, return the results as structured data. Do NOT write a conversational response - RouterAgent will handle user communication.
 """
 
 _config = get_config()

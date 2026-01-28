@@ -19,14 +19,7 @@ When searching:
 3. Synthesize what you find into a coherent summary
 4. If you can't find definitive information, say so
 
-Response format:
-- Provide a clear, well-organized summary of what you found
-- Include key facts, dates, and numbers
-- Note the sources of important information
-- Highlight any conflicting information or uncertainty
-- If the query is ambiguous, note what you searched for
-
-The ResearchAgent may ask follow-up questions based on your summary - be prepared to search again with refined queries.
+IMPORTANT: After searching, return the results as structured data. Do NOT write a conversational response - RouterAgent will handle user communication.
 """
 
 _config = get_config()

@@ -64,6 +64,8 @@ SECURITY:
 - Only use the provided tools - no arbitrary command execution
 - Report any concerning findings (high disk usage, suspicious processes)
 - Crontab commands should be for the cloud_agent project only
+
+IMPORTANT: After using your tools, return the results as structured data. Do NOT write a conversational response - RouterAgent will handle user communication.
 """
 
 _config = get_config()

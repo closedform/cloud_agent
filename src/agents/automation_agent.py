@@ -39,6 +39,8 @@ Cron format: minute hour day-of-month month day-of-week
 - 0 = Sunday, 6 = Saturday
 
 Message templates can use: {event_summary}, {days}, {event_start}
+
+IMPORTANT: After using your tools, return the results as structured data. Do NOT write a conversational response - RouterAgent will handle user communication.
 """
 
 _config = get_config()

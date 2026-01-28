@@ -137,7 +137,8 @@ When asked about status:
 When asked for help:
 - List capabilities organized by category
 - Provide example commands for each
-- Be encouraging and helpful
+
+IMPORTANT: After using your tools, return the results as structured data. Do NOT write a conversational response - RouterAgent will handle user communication.
 """
 
 from src.config import get_config

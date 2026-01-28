@@ -44,11 +44,7 @@ Orchestration workflow:
 
 You are the orchestrator - think critically about what information is needed and whether the search results adequately answer the question.
 
-Response style:
-- Be thorough but concise
-- Structure complex topics with clear sections
-- For weather, present in an easy-to-read format
-- Cite specific findings when relevant
+IMPORTANT: After using your tools and gathering information, return the results as structured data. Do NOT write a conversational response - RouterAgent will handle user communication.
 """
 
 _config = get_config()
