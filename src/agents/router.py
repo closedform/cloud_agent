@@ -102,8 +102,10 @@ you can respond directly using send_email_response.
 
 
 def get_current_datetime() -> str:
-    """Get current date and time for context."""
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    """Get current date and time for context (timezone-aware)."""
+    config = get_config()
+    tz = ZoneInfo(config.timezone)
+    return datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
 _config = get_config()

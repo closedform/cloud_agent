@@ -98,7 +98,7 @@ def check_event_rules(config: Config, services: Services) -> None:
         return
 
     rules_data = load_rules(config)
-    now = datetime.now()
+    local_tz = ZoneInfo(config.timezone)
 
     # Get events for next 30 days
     try:

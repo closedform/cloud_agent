@@ -5,6 +5,7 @@ Sends email responses directly after completing tasks.
 
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from google.adk import Agent
 
@@ -20,10 +21,11 @@ def get_system_status() -> dict[str, Any]:
 
     config = get_config()
     services = get_services()
+    tz = ZoneInfo(config.timezone)
 
     status = {
         "status": "operational",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(tz).isoformat(),
         "components": {
             "gemini": "connected" if services and services.gemini_client else "disconnected",
             "calendar": "connected" if services and services.calendar_service else "disconnected",

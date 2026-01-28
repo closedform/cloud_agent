@@ -9,6 +9,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from google.api_core.exceptions import ServiceUnavailable, ResourceExhausted
 from google.genai.errors import ServerError
@@ -73,10 +74,12 @@ class ADKOrchestrator:
         Returns:
             Context string for the agent.
         """
+        tz = ZoneInfo(self.config.timezone)
+        now = datetime.now(tz)
         lines = [
             f"From: {task.sender}",
             f"Subject: {task.subject}",
-            f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            f"Date: {now.strftime('%Y-%m-%d %H:%M')} ({self.config.timezone})",
             "",
         ]
 
