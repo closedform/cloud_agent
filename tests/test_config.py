@@ -190,11 +190,11 @@ class TestGetConfigDefaults:
         get_config.cache_clear()
 
     def test_default_gemini_model(self):
-        """Default gemini_model should be gemini-3-flash."""
+        """Default gemini_model should be gemini-3-flash-preview."""
         with patch.dict(os.environ, {}, clear=True):
             get_config.cache_clear()
             config = get_config()
-            assert config.gemini_model == "gemini-3-flash"
+            assert config.gemini_model == "gemini-3-flash-preview"
 
     def test_default_gemini_research_model(self):
         """Default gemini_research_model should be gemini-2.5-flash."""

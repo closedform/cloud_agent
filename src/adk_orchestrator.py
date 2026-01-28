@@ -10,6 +10,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from google.api_core.exceptions import ServiceUnavailable, ResourceExhausted
+
 from google.adk import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
@@ -187,17 +189,53 @@ class ADKOrchestrator:
                 role="user",
             )
 
+            # Run with retry for transient API errors (503, rate limits)
             response_text = ""
-            for event in self.runner.run(
-                user_id=task.sender,
-                session_id=session_id,
-                new_message=user_message,
-            ):
-                # Collect final response
-                if event.is_final_response() and event.content:
-                    for part in event.content.parts:
-                        if hasattr(part, "text"):
-                            response_text += part.text
+            email_sent = False
+            max_retries = 3
+            base_delay = 5  # seconds
+
+            for attempt in range(max_retries):
+                try:
+                    response_text = ""
+                    email_sent = False
+                    for event in self.runner.run(
+                        user_id=task.sender,
+                        session_id=session_id,
+                        new_message=user_message,
+                    ):
+                        # Track if email was sent via tool call
+                        if hasattr(event, "tool_code_execution_result"):
+                            pass  # Not relevant
+                        if hasattr(event, "function_calls") and event.function_calls:
+                            for fc in event.function_calls:
+                                if fc.name == "send_email_response":
+                                    email_sent = True
+                        # Collect final response
+                        if event.is_final_response() and event.content:
+                            for part in event.content.parts:
+                                if hasattr(part, "text"):
+                                    response_text += part.text
+                    break  # Success, exit retry loop
+
+                except (ServiceUnavailable, ResourceExhausted) as e:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    if attempt < max_retries - 1:
+                        print(f"  API error (attempt {attempt + 1}/{max_retries}): {e}")
+                        print(f"  Retrying in {delay}s...")
+                        time.sleep(delay)
+                    else:
+                        print(f"  API error after {max_retries} attempts: {e}")
+                        raise  # Re-raise on final attempt
+
+            # Fallback: if agent returned text but didn't send email, send it now
+            if response_text and not email_sent:
+                print(f"  Warning: Agent did not send email, using fallback")
+                from src.agents.tools.email_tools import send_email_response
+                send_email_response(
+                    subject=f"Re: {task.subject}",
+                    body=response_text,
+                )
 
             # Record assistant response
             if response_text:
