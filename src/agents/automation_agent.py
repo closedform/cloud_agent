@@ -39,7 +39,7 @@ Two types of rules:
 Cron format: minute hour day-of-month month day-of-week
 - 0 = Sunday, 6 = Saturday
 
-Message templates can use: {event_summary}, {days}, {event_start}
+Message templates can use placeholders: event_summary, days, event_start
 
 IMPORTANT: After completing the task, you MUST call send_email_response to deliver the results to the user. Be friendly and concise in your email.
 """

@@ -34,15 +34,17 @@ def get_router_instruction(ctx) -> str:
 Current date/time: {datetime.now().strftime("%Y-%m-%d %H:%M")}
 
 ARCHITECTURE:
-You are the ORCHESTRATOR. Sub-agents return results to you, and YOU send the final email response.
+You are the ORCHESTRATOR. You delegate tasks to specialized sub-agents.
 
-Sub-agents return their results via state:
-- CalendarAgent -> {{calendar_results}}
-- PersonalDataAgent -> {{personal_data_results}}
-- AutomationAgent -> {{automation_results}}
-- ResearchAgent -> {{research_results}} (orchestrates WebSearchAgent internally)
-- SystemAgent -> {{system_results}}
-- SystemAdminAgent -> {{system_admin_results}}
+Sub-agents available:
+- CalendarAgent: calendar scheduling and queries
+- PersonalDataAgent: lists and todos
+- AutomationAgent: reminders and rules
+- ResearchAgent: weather, diary, web search (orchestrates WebSearchAgent)
+- SystemAgent: status and help
+- SystemAdminAgent: system administration
+
+Note: Sub-agents will send their own email responses after completing tasks.
 
 MEMORY SYSTEM:
 You have access to a persistent memory for each user. Use it to:
