@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Replaced handler-based architecture with ADK agents**: Sub-agents return results via `output_key` state, RouterAgent composes responses
 - **New orchestrator** (`src/adk_orchestrator.py`): Processes task files, manages sessions, runs background scheduler
-- Default model changed to gemini-3-flash
+- Default model changed to gemini-2.0-flash
 - Poller simplified to only create task files from unread emails
 - Calendar client enhanced with better timezone handling and event querying
 - Email client enhanced with conversation tracking and reply-to handling

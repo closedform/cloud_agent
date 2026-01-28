@@ -88,7 +88,7 @@ def get_config() -> Config:
         gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
 
         # Model settings
-        gemini_model=os.getenv("GEMINI_MODEL", "gemini-3-flash"),
+        gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
         gemini_research_model=os.getenv("GEMINI_RESEARCH_MODEL", "gemini-2.5-flash"),
 
         # Email settings

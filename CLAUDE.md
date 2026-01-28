@@ -103,7 +103,7 @@ RouterAgent (orchestrator, sends emails, has memory)
 - **Memory** (`src/memory.py`): Persistent fact storage for user knowledge. Stores facts like "Has cat named Oliver" or "Uses Manhattan Vet" for later recall.
 
 **Models** (centralized in `config.py`):
-- `gemini_model` (default: `gemini-3-flash`): Used by all agents except WebSearchAgent
+- `gemini_model` (default: `gemini-2.0-flash`): Used by all agents except WebSearchAgent
 - `gemini_research_model` (default: `gemini-2.5-flash`): Used by WebSearchAgent for free Google Search grounding
 
 ## Adding New Capabilities
