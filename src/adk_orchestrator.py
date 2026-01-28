@@ -3,6 +3,7 @@
 Replaces the handler-based orchestrator with Google ADK agents.
 """
 
+import asyncio
 import shutil
 import threading
 import time
@@ -137,7 +138,22 @@ class ADKOrchestrator:
             # Use thread_id as session_id for ADK
             session_id = conversation.thread_id
 
-            # Run agent (Runner handles session creation internally)
+            # Ensure ADK session exists (async methods need asyncio.run)
+            async def ensure_session():
+                session = await self.session_service.get_session(
+                    app_name="cloud_agent",
+                    user_id=task.sender,
+                    session_id=session_id,
+                )
+                if session is None:
+                    await self.session_service.create_session(
+                        app_name="cloud_agent",
+                        user_id=task.sender,
+                        session_id=session_id,
+                    )
+
+            asyncio.run(ensure_session())
+
             print(f"  Thread: {conversation.thread_id} ({'new' if is_new else 'continuing'})")
 
             # Build message content for ADK
