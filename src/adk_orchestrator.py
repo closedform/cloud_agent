@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from google.api_core.exceptions import ServiceUnavailable, ResourceExhausted
+from google.genai.errors import ServerError
 
 from google.adk import Runner
 from google.adk.sessions import InMemorySessionService
@@ -220,7 +221,7 @@ class ADKOrchestrator:
                                     response_text += part.text
                     break  # Success, exit retry loop
 
-                except (ServiceUnavailable, ResourceExhausted) as e:
+                except (ServiceUnavailable, ResourceExhausted, ServerError) as e:
                     delay = base_delay * (2 ** attempt)  # Exponential backoff
                     if attempt < max_retries - 1:
                         print(f"  API error (attempt {attempt + 1}/{max_retries}): {e}")
