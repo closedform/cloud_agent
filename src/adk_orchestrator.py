@@ -156,9 +156,34 @@ class ADKOrchestrator:
 
             print(f"  Thread: {conversation.thread_id} ({'new' if is_new else 'continuing'})")
 
-            # Build message content for ADK
+            # Build message content for ADK with text and any image attachments
+            parts = [types.Part(text=context)]
+
+            # Add image attachments
+            for attachment in task.attachments:
+                attachment_path = self.config.input_dir / attachment
+                if attachment_path.exists():
+                    suffix = attachment_path.suffix.lower()
+                    if suffix in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+                        try:
+                            image_data = attachment_path.read_bytes()
+                            mime_type = {
+                                ".png": "image/png",
+                                ".jpg": "image/jpeg",
+                                ".jpeg": "image/jpeg",
+                                ".gif": "image/gif",
+                                ".webp": "image/webp",
+                            }.get(suffix, "image/png")
+                            parts.append(types.Part.from_bytes(
+                                data=image_data,
+                                mime_type=mime_type,
+                            ))
+                            print(f"  Attached image: {attachment}")
+                        except Exception as e:
+                            print(f"  Failed to attach {attachment}: {e}")
+
             user_message = types.Content(
-                parts=[types.Part(text=context)],
+                parts=parts,
                 role="user",
             )
 
