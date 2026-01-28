@@ -10,6 +10,7 @@ from src.agents.tools.calendar_tools import (
     list_calendars,
     query_calendar_events,
 )
+from src.agents.tools.email_tools import send_email_response
 from src.config import get_config
 
 CALENDAR_AGENT_INSTRUCTION = """You are a calendar assistant specializing in schedule management.
@@ -29,7 +30,7 @@ When querying events:
 - Group by calendar if showing multiple calendars
 - Include relevant details like time and description
 
-IMPORTANT: After using your tools, return the results as structured data. Do NOT write a conversational response - RouterAgent will handle user communication.
+IMPORTANT: After completing the task, you MUST call send_email_response to deliver the results to the user. Be friendly and concise in your email.
 """
 
 _config = get_config()
@@ -42,6 +43,7 @@ calendar_agent = Agent(
         create_calendar_event,
         query_calendar_events,
         list_calendars,
+        send_email_response,  # Sub-agents send their own emails in ADK
     ],
-    output_key="calendar_results",  # Results flow back to RouterAgent
+    output_key="calendar_results",
 )

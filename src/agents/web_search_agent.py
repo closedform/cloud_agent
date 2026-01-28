@@ -6,6 +6,7 @@ Returns results to parent agent (ResearchAgent) for summarization.
 
 from google.adk import Agent
 
+from src.agents.tools.email_tools import send_email_response
 from src.agents.tools.research_tools import web_search
 from src.config import get_config
 
@@ -19,7 +20,7 @@ When searching:
 3. Synthesize what you find into a coherent summary
 4. If you can't find definitive information, say so
 
-IMPORTANT: After searching, return the results as structured data. Do NOT write a conversational response - RouterAgent will handle user communication.
+IMPORTANT: After completing the search, you MUST call send_email_response to deliver the results to the user. Be friendly and concise in your email.
 """
 
 _config = get_config()
@@ -28,6 +29,9 @@ web_search_agent = Agent(
     name="WebSearchAgent",
     model=_config.gemini_research_model,  # gemini-2.5-flash for free Google Search grounding
     instruction=WEB_SEARCH_AGENT_INSTRUCTION,
-    tools=[web_search],
-    output_key="web_search_results",  # Results flow back via state
+    tools=[
+        web_search,
+        send_email_response,  # Sub-agents send their own emails in ADK
+    ],
+    output_key="web_search_results",
 )

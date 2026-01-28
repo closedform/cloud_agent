@@ -11,6 +11,7 @@ from src.agents.tools.automation_tools import (
     delete_user_rule,
     get_rules,
 )
+from src.agents.tools.email_tools import send_email_response
 from src.config import get_config
 
 AUTOMATION_AGENT_INSTRUCTION = """You are an automation assistant managing reminders and rules.
@@ -40,7 +41,7 @@ Cron format: minute hour day-of-month month day-of-week
 
 Message templates can use: {event_summary}, {days}, {event_start}
 
-IMPORTANT: After using your tools, return the results as structured data. Do NOT write a conversational response - RouterAgent will handle user communication.
+IMPORTANT: After completing the task, you MUST call send_email_response to deliver the results to the user. Be friendly and concise in your email.
 """
 
 _config = get_config()
@@ -54,6 +55,7 @@ automation_agent = Agent(
         get_rules,
         create_rule,
         delete_user_rule,
+        send_email_response,  # Sub-agents send their own emails in ADK
     ],
-    output_key="automation_results",  # Results flow back to RouterAgent
+    output_key="automation_results",
 )

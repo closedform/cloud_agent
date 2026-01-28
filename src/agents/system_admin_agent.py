@@ -10,6 +10,7 @@ Returns results to RouterAgent for email delivery.
 
 from google.adk import Agent
 
+from src.agents.tools.email_tools import send_email_response
 from src.agents.tools.system_admin_tools import (
     add_crontab_entry,
     check_disk_space,
@@ -65,7 +66,7 @@ SECURITY:
 - Report any concerning findings (high disk usage, suspicious processes)
 - Crontab commands should be for the cloud_agent project only
 
-IMPORTANT: After using your tools, return the results as structured data. Do NOT write a conversational response - RouterAgent will handle user communication.
+IMPORTANT: After completing the task, you MUST call send_email_response to deliver the results to the user. Be friendly and concise in your email.
 """
 
 _config = get_config()
@@ -90,6 +91,8 @@ system_admin_agent = Agent(
         update_dependencies,
         # Service management
         restart_services,
+        # Response
+        send_email_response,  # Sub-agents send their own emails in ADK
     ],
-    output_key="system_admin_results",  # Results flow back to RouterAgent
+    output_key="system_admin_results",
 )

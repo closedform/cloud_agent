@@ -138,9 +138,10 @@ When asked for help:
 - List capabilities organized by category
 - Provide example commands for each
 
-IMPORTANT: After using your tools, return the results as structured data. Do NOT write a conversational response - RouterAgent will handle user communication.
+IMPORTANT: After completing the task, you MUST call send_email_response to deliver the results to the user. Be friendly and concise in your email.
 """
 
+from src.agents.tools.email_tools import send_email_response
 from src.config import get_config
 
 _config = get_config()
@@ -152,6 +153,7 @@ system_agent = Agent(
     tools=[
         get_system_status,
         get_capabilities_list,
+        send_email_response,  # Sub-agents send their own emails in ADK
     ],
-    output_key="system_results",  # Results flow back to RouterAgent
+    output_key="system_results",
 )

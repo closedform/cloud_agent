@@ -5,6 +5,7 @@ Returns results to RouterAgent for email delivery.
 
 from google.adk import Agent
 
+from src.agents.tools.email_tools import send_email_response
 from src.agents.tools.personal_data_tools import (
     add_item_to_list,
     add_todo_item,
@@ -34,7 +35,7 @@ For todos:
 - When marking complete, match by text (partial match works)
 - Show both pending and completed todos when appropriate
 
-IMPORTANT: After using your tools, return the results as structured data. Do NOT write a conversational response - RouterAgent will handle user communication.
+IMPORTANT: After completing the task, you MUST call send_email_response to deliver the results to the user. Be friendly and concise in your email.
 """
 
 _config = get_config()
@@ -51,6 +52,7 @@ personal_data_agent = Agent(
         get_user_todos,
         add_todo_item,
         complete_todo_item,
+        send_email_response,  # Sub-agents send their own emails in ADK
     ],
-    output_key="personal_data_results",  # Results flow back to RouterAgent
+    output_key="personal_data_results",
 )

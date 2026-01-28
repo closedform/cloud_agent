@@ -6,6 +6,7 @@ Returns results to RouterAgent for email delivery.
 
 from google.adk import Agent
 
+from src.agents.tools.email_tools import send_email_response
 from src.agents.tools.research_tools import (
     get_weather_forecast,
     query_diary,
@@ -44,7 +45,7 @@ Orchestration workflow:
 
 You are the orchestrator - think critically about what information is needed and whether the search results adequately answer the question.
 
-IMPORTANT: After using your tools and gathering information, return the results as structured data. Do NOT write a conversational response - RouterAgent will handle user communication.
+IMPORTANT: After completing the research, you MUST call send_email_response to deliver the results to the user. Be friendly and concise in your email.
 """
 
 _config = get_config()
@@ -56,9 +57,10 @@ research_agent = Agent(
     tools=[
         get_weather_forecast,
         query_diary,
+        send_email_response,  # Sub-agents send their own emails in ADK
     ],
     sub_agents=[
         web_search_agent,
     ],
-    output_key="research_results",  # Results flow back to RouterAgent
+    output_key="research_results",
 )
