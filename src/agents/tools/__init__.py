@@ -36,6 +36,9 @@ from src.agents.tools.email_tools import (
     get_user_identity,
     send_email_response,
 )
+from src.agents.tools.task_tools import (
+    create_agent_task,
+)
 
 __all__ = [
     # Calendar
@@ -68,4 +71,6 @@ __all__ = [
     "get_conversation_history",
     "get_user_identity",
     "send_email_response",
+    # Task creation
+    "create_agent_task",
 ]

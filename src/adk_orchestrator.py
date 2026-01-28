@@ -24,9 +24,10 @@ from src.agents.tools._context import (
     set_request_context,
     set_services,
 )
+from src.clients.email import html_response, send_email, text_to_html
 from src.config import Config, get_config
 from src.reminders import load_existing_reminders
-from src.models import Task
+from src.models import AgentTask, Task
 from src.scheduler import run_scheduler
 from src.services import Services, create_services
 from src.sessions import EmailConversation, FileSessionStore, compute_thread_id
@@ -57,6 +58,76 @@ class ADKOrchestrator:
             app_name="cloud_agent",
             session_service=self.session_service,
         )
+
+    def _execute_agent_task(self, agent_task: AgentTask) -> str:
+        """Execute an agent-created task directly.
+
+        Args:
+            agent_task: The agent task to execute.
+
+        Returns:
+            "processed" - task executed successfully
+            "failed" - task execution failed
+        """
+        print(f"  Agent task: {agent_task.action} (created by {agent_task.created_by})")
+
+        if agent_task.action == "send_email":
+            return self._execute_send_email(agent_task)
+        else:
+            print(f"  Unknown action: {agent_task.action}")
+            return "failed"
+
+    def _execute_send_email(self, agent_task: AgentTask) -> str:
+        """Execute a send_email agent task.
+
+        Args:
+            agent_task: The agent task with send_email action.
+
+        Returns:
+            "processed" or "failed"
+        """
+        params = agent_task.params
+        to_address = params.get("to_address")
+        subject = params.get("subject")
+        body = params.get("body")
+        icon = params.get("icon", "💬")  # Default: speech balloon
+
+        if not all([to_address, subject, body]):
+            missing = [p for p in ("to_address", "subject", "body") if not params.get(p)]
+            print(f"  Missing required params for send_email: {missing}")
+            return "failed"
+
+        # Defense in depth: validate recipient even though tool already checked
+        if to_address not in self.config.allowed_senders:
+            print(f"  Security: Blocked email to non-whitelisted recipient: {to_address}")
+            return "failed"
+
+        try:
+            # Generate HTML version
+            html_content = text_to_html(body)
+            html_body = html_response(html_content, title=subject, icon=icon)
+
+            success = send_email(
+                to_address=to_address,
+                subject=subject,
+                body=body,
+                email_user=self.config.email_user,
+                email_pass=self.config.email_pass,
+                smtp_server=self.config.smtp_server,
+                smtp_port=self.config.smtp_port,
+                html_body=html_body,
+            )
+
+            if success:
+                print(f"  Email sent to {to_address}")
+                return "processed"
+            else:
+                print(f"  Failed to send email to {to_address}")
+                return "failed"
+
+        except Exception as e:
+            print(f"  Email error: {e}")
+            return "failed"
 
     def _build_context(
         self,
@@ -114,6 +185,16 @@ class ADKOrchestrator:
                 print(f"  Skipping {task_file.name}: could not parse")
                 return "retry"
 
+            # Check if this is an agent-created task
+            if AgentTask.is_agent_task(task_data):
+                try:
+                    agent_task = AgentTask.from_dict(task_data)
+                    return self._execute_agent_task(agent_task)
+                except ValueError as e:
+                    print(f"  Invalid agent task: {e}")
+                    return "failed"
+
+            # Regular email-originated task
             task = Task.from_dict(task_data)
 
             # Get or create conversation for multi-turn support

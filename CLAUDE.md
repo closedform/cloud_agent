@@ -55,7 +55,7 @@ RouterAgent (orchestrator, has memory)
 
 **Agents**:
 
-- **RouterAgent** (`router.py`): Orchestrator that analyzes intent and delegates to specialists. Has memory tools for persistent user facts. Can respond directly for simple queries.
+- **RouterAgent** (`router.py`): Orchestrator that analyzes intent and delegates to specialists. Has memory tools for persistent user facts. Can create agent tasks for third-party emails (e.g., sending to family members). Can respond directly for simple queries.
 
 - **CalendarAgent** (`calendar_agent.py`): Schedules events, queries calendar, lists calendars.
 
@@ -100,6 +100,8 @@ RouterAgent (orchestrator, has memory)
 - **Diary** (`src/diary.py`): Weekly activity summaries generated from todos, reminders, and calendar.
 
 - **Memory** (`src/memory.py`): Persistent fact storage for user knowledge. Stores facts like "Has cat named Oliver" or "Uses Manhattan Vet" for later recall.
+
+- **Agent Tasks** (`src/models/agent_task.py`): Tasks created by agents for system execution (e.g., sending emails to third parties). Executed directly by orchestrator with recipient whitelist enforcement.
 
 **Models** (centralized in `config.py`):
 - `gemini_model` (default: `gemini-3-flash-preview`): Used by all agents except WebSearchAgent
@@ -154,6 +156,7 @@ your_agent = Agent(
 - **ADK hand-off pattern**: Due to ADK's design, when RouterAgent delegates to a sub-agent, the sub-agent completes the entire interaction including sending the email response. RouterAgent's loop ends when the sub-agent produces output.
 - **Sub-orchestrators**: ResearchAgent orchestrates WebSearchAgent, enabling multi-step research with follow-up queries before synthesizing results.
 - **Persistent memory**: RouterAgent has tools to store/recall user facts across conversations (e.g., "Has cat named Oliver", "Uses Manhattan Vet").
+- **Agent tasks for third-party actions**: Agents use `create_agent_task` to queue system actions like emailing third parties. Orchestrator executes directly with defense-in-depth validation. Only `allowed_senders` can receive emails.
 - **Multi-turn conversations**: Thread ID from normalized subject + sender enables conversational context across email replies.
 - **Tool context via thread-local**: `_context.py` provides thread-safe global access to services and request state for ADK tools. Convenience helpers (`get_user_email()`, `get_reply_to()`, etc.) eliminate boilerplate in tool functions.
 - **Atomic file I/O**: Temp file + rename prevents orchestrator reading partial task files.
@@ -180,6 +183,7 @@ tests/
   test_automation_tools.py  # Automation agent tools (rules, reminders)
   test_personal_data_tools.py  # Personal data tools (todos with reminders)
   test_calendar_tools.py    # Calendar agent tools
+  test_agent_task.py        # Agent task model and creation tools
 ```
 
 Key fixtures:

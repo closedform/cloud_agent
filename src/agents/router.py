@@ -16,6 +16,7 @@ from src.agents.tools.email_tools import (
     get_user_identity,
     send_email_response,
 )
+from src.agents.tools.task_tools import create_agent_task
 from src.agents.tools.memory_tools import (
     forget_fact,
     list_facts_by_category,
@@ -23,6 +24,7 @@ from src.agents.tools.memory_tools import (
     remember_fact,
 )
 from src.config import get_config
+
 
 def get_router_instruction(ctx) -> str:
     """Generate router instruction with current datetime (evaluated at runtime).
@@ -98,6 +100,18 @@ When the user sends a follow-up (e.g., "also eggs" after "add milk to groceries"
 DIRECT RESPONSES:
 For simple queries that don't need a specialist (greetings, clarifications, general questions),
 you can respond directly using send_email_response.
+
+SENDING TO THIRD PARTIES:
+When a user asks you to send something to another person (not reply to themselves):
+1. Use create_agent_task with action="send_email"
+2. Provide to_address, subject, and body in params
+3. Only allowed recipients (family members in the system) can receive emails
+4. Tell the user you've queued the email for delivery
+5. Then send confirmation to the user via send_email_response
+
+Example: "Send Samantha the cat care guide"
+-> create_agent_task(action="send_email", params={{"to_address": "samantha@...", "subject": "Cat Care Guide", "body": "..."}})
+-> send_email_response("I've sent the cat care guide to Samantha!")
 """
 
 
@@ -126,6 +140,8 @@ router_agent = Agent(
         forget_fact,
         # Response (for direct responses without delegation)
         send_email_response,
+        # Agent tasks (sending to third parties)
+        create_agent_task,
     ],
     sub_agents=[
         calendar_agent,
