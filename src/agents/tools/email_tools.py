@@ -49,6 +49,7 @@ def send_email_response(
         )
 
         if success:
+            print(f"SUCCESS: Email sent to {reply_to}")
             return {
                 "status": "success",
                 "message": f"Email sent to {reply_to}",
@@ -56,9 +57,11 @@ def send_email_response(
                 "subject": subject,
             }
         else:
+            print("ERROR: Failed to send email")
             return {"status": "error", "message": "Failed to send email"}
 
     except Exception as e:
+        print(f"ERROR: Email exception: {e}")
         return {"status": "error", "message": f"Email error: {e}"}
 
 
