@@ -38,7 +38,11 @@ def get_services() -> "Services | None":
 
 
 # Current request context (set per-request)
-_request_context = threading.local()
+# Note: Using a regular dict instead of threading.local() because ADK runs
+# sub-agents in separate threads that need access to the same context.
+# Since tasks are processed sequentially, this is safe.
+_request_context: dict[str, str] = {}
+_context_lock = threading.Lock()
 
 
 def set_request_context(
@@ -57,10 +61,11 @@ def set_request_context(
         reply_to: Reply-to address for responses.
         body: Original message body for context.
     """
-    _request_context.user_email = user_email
-    _request_context.thread_id = thread_id
-    _request_context.reply_to = reply_to
-    _request_context.body = body
+    with _context_lock:
+        _request_context["user_email"] = user_email
+        _request_context["thread_id"] = thread_id
+        _request_context["reply_to"] = reply_to
+        _request_context["body"] = body
 
 
 def get_request_context() -> dict[str, str]:
@@ -69,39 +74,42 @@ def get_request_context() -> dict[str, str]:
     Returns:
         Dictionary with user_email, thread_id, reply_to, and body.
     """
-    return {
-        "user_email": getattr(_request_context, "user_email", ""),
-        "thread_id": getattr(_request_context, "thread_id", ""),
-        "reply_to": getattr(_request_context, "reply_to", ""),
-        "body": getattr(_request_context, "body", ""),
-    }
+    with _context_lock:
+        return {
+            "user_email": _request_context.get("user_email", ""),
+            "thread_id": _request_context.get("thread_id", ""),
+            "reply_to": _request_context.get("reply_to", ""),
+            "body": _request_context.get("body", ""),
+        }
 
 
 def clear_request_context() -> None:
     """Clear the current request context."""
-    _request_context.user_email = ""
-    _request_context.thread_id = ""
-    _request_context.reply_to = ""
-    _request_context.body = ""
+    with _context_lock:
+        _request_context.clear()
 
 
 # Convenience accessors for common context values
 def get_user_email() -> str:
     """Get current user's email from request context."""
-    return getattr(_request_context, "user_email", "")
+    with _context_lock:
+        return _request_context.get("user_email", "")
 
 
 def get_reply_to() -> str:
     """Get reply-to address from request context."""
-    return getattr(_request_context, "reply_to", "")
+    with _context_lock:
+        return _request_context.get("reply_to", "")
 
 
 def get_thread_id() -> str:
     """Get thread ID from request context."""
-    return getattr(_request_context, "thread_id", "")
+    with _context_lock:
+        return _request_context.get("thread_id", "")
 
 
 def get_body() -> str:
     """Get original message body from request context."""
-    return getattr(_request_context, "body", "")
+    with _context_lock:
+        return _request_context.get("body", "")
 
