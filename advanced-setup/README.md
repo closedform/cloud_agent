@@ -2,12 +2,14 @@
 
 This is the advanced multi-agent version of Cloud Agent, featuring:
 
+- **Multi-user support** - each user gets their own isolated data (lists, todos, memory, reminders, rules)
 - **Google ADK (Agent Development Kit)** multi-agent orchestration
 - **Specialized sub-agents** for different domains (calendar, lists, research, etc.)
 - **Persistent memory** for user facts across conversations
 - **Multi-turn email conversations** with session tracking
 - **Automation rules** (cron-based and calendar event triggers)
 - **Background scheduler** for reminders and automated tasks
+- **Identity management** - personalized responses for known users
 
 ## Architecture
 
@@ -87,6 +89,19 @@ See `.env.example` for all configuration options:
 | `ALLOWED_SENDERS` | Comma-separated list of allowed email addresses |
 | `ADMIN_EMAILS` | Emails allowed to use SystemAdminAgent |
 | `TIMEZONE` | Your timezone (default: America/New_York) |
+
+## Multi-User Support
+
+The agent supports multiple users, each with completely isolated data:
+
+- **Lists & Todos** - each user has their own lists (groceries, movies, etc.) and todos
+- **Memory** - facts remembered for one user aren't visible to others
+- **Reminders** - per-user reminder scheduling
+- **Automation Rules** - each user can set up their own weekly summaries and event triggers
+- **Conversation History** - multi-turn sessions are tracked per user
+- **Weekly Diary** - activity summaries generated for each user
+
+Add allowed users to `ALLOWED_SENDERS` in `.env`, and optionally add their identities to `src/identities.py` for personalized greetings (e.g., "Hi Brandon" instead of "Hi there").
 
 ## Capabilities
 
