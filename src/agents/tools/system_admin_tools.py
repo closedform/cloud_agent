@@ -212,6 +212,10 @@ def remove_crontab_entry(pattern: str) -> dict[str, Any]:
     if error := _require_admin():
         return error
 
+    # Validate pattern is not empty (empty pattern would match everything!)
+    if not pattern or not pattern.strip():
+        return {"status": "error", "message": "Pattern cannot be empty"}
+
     # Get current crontab
     code, stdout, stderr = _run_command(["crontab", "-l"])
     if code != 0:

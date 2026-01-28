@@ -8,7 +8,7 @@ import json
 import os
 import tempfile
 import threading
-import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -27,7 +27,7 @@ def load_user_data(config: Config) -> dict[str, Any]:
     try:
         with open(config.user_data_file, "r") as f:
             return json.load(f)
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return {}
 
 
@@ -148,7 +148,7 @@ def add_todo(
 
         local_tz = ZoneInfo(config.timezone)
         todo: dict[str, Any] = {
-            "id": str(int(time.time() * 1000)),
+            "id": uuid.uuid4().hex,
             "text": text,
             "done": False,
             "created_at": datetime.now(local_tz).isoformat(),

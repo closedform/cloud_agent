@@ -69,7 +69,7 @@ def _load_user_memory(email: str) -> list[Fact]:
         with open(memory_file, "r") as f:
             data = json.load(f)
         return [Fact.from_dict(item) for item in data]
-    except (json.JSONDecodeError, KeyError):
+    except (json.JSONDecodeError, KeyError, UnicodeDecodeError):
         return []
 
 
