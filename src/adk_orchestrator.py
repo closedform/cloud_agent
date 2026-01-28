@@ -251,8 +251,14 @@ class ADKOrchestrator:
                     response_text,
                 )
 
-            print(f"  Completed processing for {task.sender}")
-            return "processed"
+            # Only mark as processed if we actually did something
+            # (ADK async errors don't propagate to main thread)
+            if email_sent or response_text:
+                print(f"  Completed processing for {task.sender}")
+                return "processed"
+            else:
+                print(f"  No response generated for {task.sender}, will retry")
+                return "retry"
 
         except Exception as e:
             print(f"  Error processing task: {e}")
