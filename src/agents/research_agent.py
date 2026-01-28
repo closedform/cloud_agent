@@ -27,7 +27,7 @@ DIARY/HISTORY QUERIES:
 
 WEB SEARCH (orchestrated via WebSearchAgent):
 - For current information, news, or fact-checking, delegate to WebSearchAgent
-- WebSearchAgent will search and return a summary of findings in {web_search_results}
+- WebSearchAgent will search and return a summary of findings via its output_key
 - You can then:
   - Ask follow-up questions if the initial search was incomplete
   - Request a more specific search if results were too broad

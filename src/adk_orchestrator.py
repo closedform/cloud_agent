@@ -205,12 +205,14 @@ class ADKOrchestrator:
                         new_message=user_message,
                     ):
                         # Track if email was sent via tool call
-                        if hasattr(event, "tool_code_execution_result"):
-                            pass  # Not relevant
-                        if hasattr(event, "function_calls") and event.function_calls:
-                            for fc in event.function_calls:
-                                if fc.name == "send_email_response":
-                                    email_sent = True
+                        try:
+                            func_calls = event.get_function_calls()
+                            if func_calls:
+                                for fc in func_calls:
+                                    if hasattr(fc, "name") and fc.name == "send_email_response":
+                                        email_sent = True
+                        except (AttributeError, TypeError):
+                            pass  # Event doesn't support function calls
                         # Collect final response
                         if event.is_final_response() and event.content:
                             for part in event.content.parts:
