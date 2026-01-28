@@ -260,18 +260,36 @@ def format_calendar_html(events_by_calendar: dict[str, list[dict]]) -> str:
 
 
 def text_to_html(text: str) -> str:
-    """Convert plain text to basic HTML with paragraph formatting.
+    """Convert plain text with basic markdown to HTML.
+
+    Supports:
+    - **bold** -> <strong>bold</strong>
+    - *italic* -> <em>italic</em>
+    - Paragraphs (double newlines)
+    - Line breaks (single newlines)
 
     Args:
-        text: Plain text content.
+        text: Plain text content with optional markdown.
 
     Returns:
         HTML-formatted content.
     """
     import html
+    import re
 
     # Escape HTML entities
     escaped = html.escape(text)
+
+    # Convert markdown bold **text** to <strong>text</strong>
+    escaped = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', escaped)
+
+    # Convert markdown italic *text* to <em>text</em> (but not ** which is bold)
+    escaped = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'<em>\1</em>', escaped)
+
+    # Convert bullet points (- item or * item at start of line)
+    escaped = re.sub(r'(?m)^[-*]\s+(.+)$', r'<li>\1</li>', escaped)
+    # Wrap consecutive <li> items in <ul>
+    escaped = re.sub(r'((?:<li>.*?</li>\n?)+)', r'<ul>\1</ul>', escaped)
 
     # Convert double newlines to paragraphs
     paragraphs = escaped.split("\n\n")

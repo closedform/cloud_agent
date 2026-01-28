@@ -1,6 +1,7 @@
 """RouterAgent - orchestrates specialist agents and sends email responses."""
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from google.adk import Agent
 
@@ -29,9 +30,12 @@ def get_router_instruction(ctx) -> str:
     Args:
         ctx: ADK InvocationContext passed when instruction is a callable.
     """
+    config = get_config()
+    tz = ZoneInfo(config.timezone)
+    now = datetime.now(tz)
     return f"""You are a personal AI assistant orchestrating specialized sub-agents to help users via email.
 
-Current date/time: {datetime.now().strftime("%Y-%m-%d %H:%M")}
+Current date/time: {now.strftime("%Y-%m-%d %H:%M")} ({config.timezone})
 
 ARCHITECTURE:
 You are the ORCHESTRATOR. You delegate tasks to specialized sub-agents.
