@@ -268,8 +268,10 @@ def text_to_html(text: str) -> str:
     - Paragraphs (double newlines)
     - Line breaks (single newlines)
 
+    If input already contains HTML tags, returns it as-is.
+
     Args:
-        text: Plain text content with optional markdown.
+        text: Plain text content with optional markdown, or pre-formatted HTML.
 
     Returns:
         HTML-formatted content.
@@ -277,13 +279,17 @@ def text_to_html(text: str) -> str:
     import html
     import re
 
-    # Escape HTML entities
+    # If text already contains HTML tags, return as-is (don't escape)
+    if re.search(r'<(p|h[1-6]|ul|ol|li|strong|em|br|div|span)[>\s/]', text, re.IGNORECASE):
+        return text
+
+    # Escape HTML entities for plain text
     escaped = html.escape(text)
 
-    # Convert markdown bold **text** to <strong>text</strong>
+    # Convert markdown bold **text** to <strong>bold</strong>
     escaped = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', escaped)
 
-    # Convert markdown italic *text* to <em>text</em> (but not ** which is bold)
+    # Convert markdown italic *text* to <em>italic</em> (but not ** which is bold)
     escaped = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'<em>\1</em>', escaped)
 
     # Convert bullet points (- item or * item at start of line)
