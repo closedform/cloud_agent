@@ -23,8 +23,12 @@ from src.agents.tools.memory_tools import (
 )
 from src.config import get_config
 
-def get_router_instruction() -> str:
-    """Generate router instruction with current datetime (evaluated at runtime)."""
+def get_router_instruction(ctx) -> str:
+    """Generate router instruction with current datetime (evaluated at runtime).
+
+    Args:
+        ctx: ADK InvocationContext passed when instruction is a callable.
+    """
     return f"""You are a personal AI assistant orchestrating specialized sub-agents to help users via email.
 
 Current date/time: {datetime.now().strftime("%Y-%m-%d %H:%M")}
