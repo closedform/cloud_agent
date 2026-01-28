@@ -11,6 +11,7 @@ from pathlib import Path
 
 from google.adk import Runner
 from google.adk.sessions import InMemorySessionService
+from google.genai import types
 
 from src.agents import router_agent
 from src.agents.tools._context import (
@@ -133,28 +134,23 @@ class ADKOrchestrator:
                 task.body,
             )
 
-            # Get or create ADK session
+            # Use thread_id as session_id for ADK
             session_id = conversation.thread_id
-            session = self.session_service.get_session(
-                app_name="cloud_agent",
-                user_id=task.sender,
-                session_id=session_id,
-            )
-            if session is None:
-                session = self.session_service.create_session(
-                    app_name="cloud_agent",
-                    user_id=task.sender,
-                    session_id=session_id,
-                )
 
-            # Run agent
+            # Run agent (Runner handles session creation internally)
             print(f"  Thread: {conversation.thread_id} ({'new' if is_new else 'continuing'})")
+
+            # Build message content for ADK
+            user_message = types.Content(
+                parts=[types.Part(text=context)],
+                role="user",
+            )
 
             response_text = ""
             for event in self.runner.run(
                 user_id=task.sender,
                 session_id=session_id,
-                new_message=context,
+                new_message=user_message,
             ):
                 # Collect final response
                 if event.is_final_response() and event.content:
