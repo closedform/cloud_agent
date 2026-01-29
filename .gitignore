@@ -24,3 +24,11 @@ inputs/
 processed/
 failed/
 *.zip
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Misc
+RESUME.TXT
