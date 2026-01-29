@@ -4,8 +4,6 @@ Handles scheduling reminders using threading.Timer and persisting to JSON.
 """
 
 import json
-import os
-import tempfile
 import threading
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -13,9 +11,15 @@ from zoneinfo import ZoneInfo
 from src.clients.email import send_email, html_reminder
 from src.config import Config
 from src.models import Reminder
+from src.utils import atomic_write_json
 
 # Lock for atomic reminder file operations
 _reminders_lock = threading.Lock()
+
+# Track active timers for cancellation support
+# Maps reminder_id -> Timer object
+_active_timers: dict[str, threading.Timer] = {}
+_timers_lock = threading.Lock()
 
 
 def _load_reminders(config: Config) -> list[dict]:
@@ -30,21 +34,8 @@ def _load_reminders(config: Config) -> list[dict]:
 
 
 def _save_reminders(reminders: list[dict], config: Config) -> None:
-    """Save reminders atomically using temp file + rename (must be called with lock held)."""
-    dir_path = config.reminders_file.parent
-    dir_path.mkdir(parents=True, exist_ok=True)
-
-    fd, tmp_path = tempfile.mkstemp(suffix=".tmp", dir=dir_path)
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(reminders, f, indent=2)
-        os.rename(tmp_path, config.reminders_file)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+    """Save reminders atomically (must be called with lock held)."""
+    atomic_write_json(reminders, config.reminders_file)
 
 
 def send_reminder_email(
@@ -54,12 +45,30 @@ def send_reminder_email(
     created_at: str,
     config: Config,
 ) -> None:
-    """Send a reminder email and remove it from storage."""
+    """Send a reminder email and remove it from storage.
+
+    Security: Validates reply_to against allowed_senders whitelist.
+
+    This function is called from threading.Timer callbacks, so all exceptions
+    must be caught to prevent silent thread death.
+    """
+    email_sent = False
     try:
+        # Security: Validate recipient against allowed senders whitelist
+        allowed_senders_lower = {s.lower() for s in config.allowed_senders}
+        if reply_to.lower() not in allowed_senders_lower:
+            print(f"Security: Blocked reminder to non-whitelisted recipient: {reply_to}")
+            # email_sent stays False, cleanup will happen in finally block
+            return
+
         # Log the reminder for diary aggregation
         from src.diary import log_fired_reminder
 
-        log_fired_reminder(reply_to, message, config)
+        try:
+            log_fired_reminder(reply_to, message, config)
+        except Exception as e:
+            # Don't fail the reminder if logging fails
+            print(f"Warning: Failed to log reminder for diary: {e}")
 
         plain_body = f"This is your reminder: {message}\n\nOriginally set: {created_at}"
         html_body = html_reminder(message, created_at)
@@ -74,22 +83,34 @@ def send_reminder_email(
             smtp_port=config.smtp_port,
             html_body=html_body,
         )
+        email_sent = True
         print(f"Reminder fired: {message[:30]}... -> {reply_to}")
 
-        # Remove from reminders.json atomically with locking
-        with _reminders_lock:
-            reminders = _load_reminders(config)
-            reminders = [r for r in reminders if r.get("id") != reminder_id]
-            _save_reminders(reminders, config)
-
     except Exception as e:
-        print(f"Error sending reminder: {e}")
+        print(f"Error sending reminder email: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        # Always clean up storage and timer tracking, even if email failed
+        # This prevents reminder from being "stuck" and retried forever on restart
+        try:
+            with _reminders_lock:
+                reminders = _load_reminders(config)
+                reminders = [r for r in reminders if r.get("id") != reminder_id]
+                _save_reminders(reminders, config)
+        except Exception as e:
+            print(f"Error cleaning up reminder {reminder_id} from storage: {e}")
+
+        # Clean up timer from tracking dict
+        with _timers_lock:
+            _active_timers.pop(reminder_id, None)
 
 
 def schedule_reminder(reminder: Reminder, config: Config) -> None:
     """Schedule a reminder using threading.Timer.
 
     Handles both timezone-aware and naive datetime strings.
+    Tracks the timer for potential cancellation.
     """
     try:
         reminder_time = datetime.fromisoformat(reminder.datetime)
@@ -124,6 +145,15 @@ def schedule_reminder(reminder: Reminder, config: Config) -> None:
                 ],
             )
             timer.daemon = True
+
+            # Track timer for potential cancellation
+            with _timers_lock:
+                # Cancel any existing timer for this reminder ID (prevents duplicates on reload)
+                old_timer = _active_timers.pop(reminder.id, None)
+                if old_timer is not None:
+                    old_timer.cancel()
+                _active_timers[reminder.id] = timer
+
             timer.start()
             print(f"  Scheduled reminder in {delay:.0f}s: {reminder.message[:30]}...")
 
@@ -168,3 +198,63 @@ def load_existing_reminders(config: Config) -> None:
 
     except Exception as e:
         print(f"Error loading reminders: {e}")
+
+
+def cancel_reminder(reminder_id: str, config: Config) -> bool:
+    """Cancel a scheduled reminder by ID.
+
+    Removes the reminder from both the timer tracking and persistent storage.
+
+    Args:
+        reminder_id: ID of the reminder to cancel.
+        config: Application configuration.
+
+    Returns:
+        True if the reminder was found and cancelled, False otherwise.
+    """
+    cancelled = False
+
+    # Cancel the timer if active
+    with _timers_lock:
+        timer = _active_timers.pop(reminder_id, None)
+        if timer is not None:
+            timer.cancel()
+            cancelled = True
+
+    # Remove from persistent storage
+    with _reminders_lock:
+        reminders = _load_reminders(config)
+        original_count = len(reminders)
+        reminders = [r for r in reminders if r.get("id") != reminder_id]
+        if len(reminders) < original_count:
+            _save_reminders(reminders, config)
+            cancelled = True
+
+    return cancelled
+
+
+def cancel_all_reminders() -> int:
+    """Cancel all active reminder timers.
+
+    Useful for graceful shutdown. Does not modify persistent storage,
+    so reminders will be rescheduled on next startup.
+
+    Returns:
+        Number of timers cancelled.
+    """
+    with _timers_lock:
+        count = len(_active_timers)
+        for timer in _active_timers.values():
+            timer.cancel()
+        _active_timers.clear()
+    return count
+
+
+def get_active_reminder_count() -> int:
+    """Get the number of currently scheduled reminders.
+
+    Returns:
+        Number of active reminder timers.
+    """
+    with _timers_lock:
+        return len(_active_timers)

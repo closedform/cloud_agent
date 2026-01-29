@@ -23,11 +23,24 @@ def mock_config_with_whitelist():
 
 @pytest.fixture
 def setup_request_context():
-    """Set up request context for tool calls."""
+    """Set up request context for tool calls with an attacker email (not in whitelist)."""
     set_request_context(
         user_email="attacker@example.com",
         thread_id="test-thread-123",
         reply_to="attacker@example.com",
+        body="test body",
+    )
+    yield
+    clear_request_context()
+
+
+@pytest.fixture
+def setup_allowed_sender_context():
+    """Set up request context with an allowed sender email (for valid tests)."""
+    set_request_context(
+        user_email="allowed@example.com",  # This is in the whitelist
+        thread_id="test-thread-123",
+        reply_to="allowed@example.com",
         body="test body",
     )
     yield
@@ -207,16 +220,20 @@ class TestDisplayNameBypass:
 
 
 class TestValidWhitelistedEmails:
-    """Verify that legitimate whitelisted emails still work."""
+    """Verify that legitimate whitelisted emails still work.
 
-    def test_exact_match_should_succeed(self, mock_config_with_whitelist, setup_request_context):
+    Note: Both the sender (user_email in context) and recipient (to_address)
+    must be in the allowed_senders list for security.
+    """
+
+    def test_exact_match_should_succeed(self, mock_config_with_whitelist, setup_allowed_sender_context):
         """Exact match of whitelisted email should succeed."""
         with patch("src.agents.tools.task_tools.get_config", return_value=mock_config_with_whitelist):
             with patch("src.agents.tools.task_tools.write_task_atomic"):
                 result = create_agent_task(
                     action="send_email",
                     params={
-                        "to_address": "allowed@example.com",
+                        "to_address": "admin@test.org",  # Recipient must be allowed
                         "subject": "Test",
                         "body": "Test body",
                     },
@@ -228,7 +245,7 @@ class TestValidWhitelistedEmails:
                 )
 
     def test_second_whitelisted_email_should_succeed(
-        self, mock_config_with_whitelist, setup_request_context
+        self, mock_config_with_whitelist, setup_allowed_sender_context
     ):
         """Second whitelisted email should also succeed."""
         with patch("src.agents.tools.task_tools.get_config", return_value=mock_config_with_whitelist):

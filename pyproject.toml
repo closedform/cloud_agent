@@ -44,3 +44,8 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "raise NotImplementedError",
 ]
+
+[dependency-groups]
+dev = [
+    "freezegun>=1.5.5",
+]

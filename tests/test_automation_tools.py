@@ -417,7 +417,7 @@ class TestDeleteRule:
             assert len(rules_data.get("test@example.com", [])) == 0
 
     def test_delete_rule_not_found(self, test_config):
-        """Deleting non-existent rule returns not_found status."""
+        """Deleting non-existent rule returns error status."""
         with patch(
             "src.agents.tools.automation_tools.get_user_email", return_value="test@example.com"
         ), patch(
@@ -431,7 +431,7 @@ class TestDeleteRule:
 
             result = delete_user_rule(rule_id="nonexistent-id")
 
-            assert result["status"] == "not_found"
+            assert result["status"] == "error"
             assert "not found" in result["message"]
 
     def test_delete_rule_missing_user_email(self, test_config):

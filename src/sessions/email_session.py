@@ -20,19 +20,25 @@ def compute_thread_id(subject: str, sender: str) -> str:
     Returns:
         16-character hex hash identifying the thread.
     """
-    # Normalize subject: lowercase and strip Re:, Fwd:, Fw: prefixes
+    # Normalize subject: lowercase and strip prefixes iteratively
+    # This handles Re:, Fwd:, Fw: and bracketed prefixes like [External], [SPAM]
+    # in any order or combination
     normalized = subject.lower().strip()
     prefixes = ["re:", "fwd:", "fw:"]
+
     changed = True
     while changed:
         changed = False
+        # Strip Re:/Fwd:/Fw: prefixes
         for prefix in prefixes:
             if normalized.startswith(prefix):
                 normalized = normalized[len(prefix) :].strip()
                 changed = True
-
-    # Also strip bracketed prefixes like [External] or [SPAM]
-    normalized = re.sub(r"^\[[^\]]+\]\s*", "", normalized)
+        # Strip bracketed prefixes like [External] or [SPAM]
+        stripped = re.sub(r"^\[[^\]]+\]\s*", "", normalized)
+        if stripped != normalized:
+            normalized = stripped
+            changed = True
 
     # Create key from sender and normalized subject
     key = f"{sender.lower()}:{normalized}"

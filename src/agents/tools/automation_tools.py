@@ -3,6 +3,7 @@
 Handles reminders and rules operations.
 """
 
+from datetime import datetime
 from typing import Any
 
 from src.agents.tools._context import get_user_email, get_reply_to
@@ -10,6 +11,25 @@ from src.config import get_config
 from src.reminders import add_reminder
 from src.models import Reminder
 from src.rules import Rule, add_rule, delete_rule, get_user_rules
+
+# Valid actions for rules
+VALID_RULE_ACTIONS = {"weekly_schedule_summary", "send_reminder", "generate_diary"}
+
+
+def _validate_datetime(datetime_str: str) -> tuple[bool, str]:
+    """Validate an ISO datetime string.
+
+    Args:
+        datetime_str: ISO format datetime string.
+
+    Returns:
+        Tuple of (is_valid, error_message).
+    """
+    try:
+        datetime.fromisoformat(datetime_str.replace("Z", "+00:00"))
+        return True, ""
+    except ValueError as e:
+        return False, f"Invalid datetime format: {e}"
 
 
 def create_reminder(
@@ -19,7 +39,7 @@ def create_reminder(
     """Create a new reminder.
 
     Args:
-        message: Reminder message/subject.
+        message: Reminder message/subject (cannot be empty).
         reminder_time: When to send reminder in ISO format (YYYY-MM-DDTHH:MM:SS).
 
     Returns:
@@ -28,6 +48,15 @@ def create_reminder(
     reply_to = get_reply_to()
     if not reply_to:
         return {"status": "error", "message": "Reply address not available"}
+
+    # Validate message is not empty
+    if not message or not message.strip():
+        return {"status": "error", "message": "Reminder message cannot be empty"}
+
+    # Validate datetime format
+    is_valid, error_msg = _validate_datetime(reminder_time)
+    if not is_valid:
+        return {"status": "error", "message": error_msg}
 
     config = get_config()
 
@@ -67,13 +96,17 @@ def get_rules() -> dict[str, Any]:
         return {"status": "error", "message": "User email not available"}
 
     config = get_config()
-    rules = get_user_rules(email, config)
 
-    return {
-        "status": "success",
-        "rules": [r.to_dict() for r in rules],
-        "count": len(rules),
-    }
+    try:
+        rules = get_user_rules(email, config)
+        return {
+            "status": "success",
+            "rules": [r.to_dict() for r in rules],
+            "count": len(rules),
+        }
+    except (KeyError, TypeError) as e:
+        # Handle corrupted rule data gracefully
+        return {"status": "error", "message": f"Error loading rules: {e}"}
 
 
 def create_rule(
@@ -91,7 +124,7 @@ def create_rule(
         action: Action to perform - "weekly_schedule_summary", "send_reminder", "generate_diary".
         schedule: Cron expression for time-based rules (e.g., "0 8 * * 0" for Sunday 8am).
         description: Event description for AI matching (event rules only).
-        days_before: Days before event to trigger (event rules only).
+        days_before: Days before event to trigger (event rules only, must be >= 0).
         message_template: Message template for send_reminder action.
 
     Returns:
@@ -100,6 +133,16 @@ def create_rule(
     email = get_user_email()
     if not email:
         return {"status": "error", "message": "User email not available"}
+
+    # Validate action
+    if not action or not action.strip():
+        return {"status": "error", "message": "Action cannot be empty"}
+
+    if action not in VALID_RULE_ACTIONS:
+        return {
+            "status": "error",
+            "message": f"Unknown action: {action}. Valid actions: {', '.join(sorted(VALID_RULE_ACTIONS))}",
+        }
 
     config = get_config()
 
@@ -112,6 +155,7 @@ def create_rule(
             if not schedule:
                 return {"status": "error", "message": "Schedule required for time rules"}
 
+            # Rule.create_time_rule validates cron expression and raises ValueError if invalid
             rule = Rule.create_time_rule(
                 user_email=email,
                 schedule=schedule,
@@ -124,6 +168,12 @@ def create_rule(
 
             trigger = {}
             if days_before is not None:
+                # Validate days_before is non-negative
+                if days_before < 0:
+                    return {
+                        "status": "error",
+                        "message": "days_before must be >= 0 (use 0 for day-of event)",
+                    }
                 trigger["days_before"] = days_before
 
             rule = Rule.create_event_rule(
@@ -156,6 +206,7 @@ def delete_user_rule(rule_id: str) -> dict[str, Any]:
 
     Returns:
         Dictionary with deletion status.
+        status will be "success" if deleted, "error" if not found or other issue.
     """
     email = get_user_email()
     if not email:
@@ -172,8 +223,8 @@ def delete_user_rule(rule_id: str) -> dict[str, Any]:
         }
     else:
         return {
-            "status": "not_found",
-            "message": f"Rule {rule_id} not found",
+            "status": "error",
+            "message": f"Rule {rule_id} not found or already deleted",
             "rule_id": rule_id,
         }
 

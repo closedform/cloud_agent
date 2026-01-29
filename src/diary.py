@@ -4,8 +4,6 @@ Generates weekly diary entries from user activity (todos, reminders, calendar).
 """
 
 import json
-import os
-import tempfile
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -13,9 +11,18 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from src.config import Config
+from src.utils import atomic_write_json
 
 # Lock for thread-safe file operations
 _diary_lock = threading.Lock()
+
+# Default timezone for naive datetime handling
+_DEFAULT_TZ = "America/New_York"
+
+
+def _now_iso() -> str:
+    """Return current time as timezone-aware ISO string."""
+    return datetime.now(ZoneInfo(_DEFAULT_TZ)).isoformat()
 
 
 @dataclass
@@ -28,7 +35,7 @@ class DiaryEntry:
     week_end: str  # ISO date
     content: str
     sources: dict[str, list[str]] = field(default_factory=dict)
-    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = field(default_factory=_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -52,7 +59,7 @@ class DiaryEntry:
             week_end=data["week_end"],
             content=data["content"],
             sources=data.get("sources", {}),
-            created_at=data.get("created_at", datetime.now().isoformat()),
+            created_at=data.get("created_at", _now_iso()),
         )
 
 
@@ -105,34 +112,34 @@ def load_diary(config: Config) -> dict[str, list[dict[str, Any]]]:
         return {}
     try:
         with open(config.diary_file, "r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
+            data = json.load(f)
+        # Validate structure
+        if not isinstance(data, dict):
+            print(f"Warning: Diary file has invalid structure (expected dict), returning empty")
+            return {}
+        return data
+    except json.JSONDecodeError as e:
+        print(f"Warning: Diary file has invalid JSON: {e}")
+        return {}
+    except OSError as e:
+        print(f"Warning: Cannot read diary file: {e}")
         return {}
 
 
 def save_diary(data: dict[str, list[dict[str, Any]]], config: Config) -> None:
     """Save diary entries atomically."""
-    dir_path = config.diary_file.parent
-    dir_path.mkdir(parents=True, exist_ok=True)
-
-    fd, tmp_path = tempfile.mkstemp(suffix=".tmp", dir=dir_path)
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2)
-        os.rename(tmp_path, config.diary_file)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+    atomic_write_json(data, config.diary_file)
 
 
 def get_user_diary_entries(
     email: str, config: Config, limit: int | None = None
 ) -> list[DiaryEntry]:
-    """Get diary entries for a user, most recent first."""
-    data = load_diary(config)
+    """Get diary entries for a user, most recent first.
+
+    Thread-safe: acquires lock during file read.
+    """
+    with _diary_lock:
+        data = load_diary(config)
     entries_data = data.get(email, [])
     entries = [DiaryEntry.from_dict(e) for e in entries_data]
     # Sort by week_start descending
@@ -143,8 +150,12 @@ def get_user_diary_entries(
 
 
 def get_diary_entry(email: str, week_id: str, config: Config) -> DiaryEntry | None:
-    """Get a specific diary entry by week ID."""
-    data = load_diary(config)
+    """Get a specific diary entry by week ID.
+
+    Thread-safe: acquires lock during file read.
+    """
+    with _diary_lock:
+        data = load_diary(config)
     entries_data = data.get(email, [])
     for entry_data in entries_data:
         if entry_data.get("id") == week_id:
@@ -178,27 +189,23 @@ def load_reminder_log(config: Config) -> list[dict[str, Any]]:
         return []
     try:
         with open(config.reminder_log_file, "r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
+            data = json.load(f)
+        # Validate structure
+        if not isinstance(data, list):
+            print(f"Warning: Reminder log has invalid structure (expected list), returning empty")
+            return []
+        return data
+    except json.JSONDecodeError as e:
+        print(f"Warning: Reminder log has invalid JSON: {e}")
+        return []
+    except OSError as e:
+        print(f"Warning: Cannot read reminder log: {e}")
         return []
 
 
 def save_reminder_log(data: list[dict[str, Any]], config: Config) -> None:
     """Save reminder log atomically."""
-    dir_path = config.reminder_log_file.parent
-    dir_path.mkdir(parents=True, exist_ok=True)
-
-    fd, tmp_path = tempfile.mkstemp(suffix=".tmp", dir=dir_path)
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2)
-        os.rename(tmp_path, config.reminder_log_file)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+    atomic_write_json(data, config.reminder_log_file)
 
 
 def log_fired_reminder(
@@ -221,11 +228,16 @@ def get_reminders_in_range(
 ) -> list[str]:
     """Get reminder messages fired within a date range for a user.
 
+    Thread-safe: acquires lock during file read.
+
     Handles both timezone-aware and naive fired_at timestamps.
-    If start/end are tz-aware and fired_at is naive, assumes local timezone.
+    All comparisons are done in the local timezone for consistency.
+    - If start/end are tz-aware and fired_at is naive, assumes local timezone for fired_at.
+    - If start/end are naive and fired_at is tz-aware, converts fired_at to local then strips tz.
     """
     local_tz = ZoneInfo(config.timezone)
-    log = load_reminder_log(config)
+    with _diary_lock:
+        log = load_reminder_log(config)
     messages = []
     for entry in log:
         if entry.get("user") != email:
@@ -237,9 +249,11 @@ def get_reminders_in_range(
             fired_at = datetime.fromisoformat(fired_at_str)
             # Ensure timezone consistency for comparison
             if start.tzinfo is not None and fired_at.tzinfo is None:
+                # start is tz-aware, fired_at is naive: assume fired_at is local
                 fired_at = fired_at.replace(tzinfo=local_tz)
             elif start.tzinfo is None and fired_at.tzinfo is not None:
-                fired_at = fired_at.replace(tzinfo=None)
+                # start is naive, fired_at is tz-aware: convert to local, then make naive
+                fired_at = fired_at.astimezone(local_tz).replace(tzinfo=None)
         except ValueError:
             continue
         if start <= fired_at <= end:

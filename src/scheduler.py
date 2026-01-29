@@ -3,13 +3,13 @@
 Runs in a background thread, checking rules every 60 seconds.
 """
 
-import json
+import threading
 import time
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from croniter import croniter
+from croniter import croniter, CroniterBadCronError
 
 from src.clients import calendar as calendar_client
 from src.clients.email import (
@@ -30,9 +30,10 @@ from src.diary import (
 from src.identities import IDENTITIES
 from src.rules import (
     Rule,
+    cleanup_old_triggered,
     get_user_rules,
     is_event_triggered,
-    load_rules,
+    load_rules_safe,
     mark_event_triggered,
     update_rule_last_fired,
 )
@@ -40,22 +41,47 @@ from src.services import Services
 from src.user_data import get_todos, load_user_data
 
 
-def run_scheduler(config: Config, services: Services) -> None:
-    """Main scheduler loop - runs in separate thread."""
+def run_scheduler(
+    config: Config,
+    services: Services,
+    shutdown_event: threading.Event | None = None,
+) -> None:
+    """Main scheduler loop - runs in separate thread.
+
+    Args:
+        config: Application configuration.
+        services: Initialized external services.
+        shutdown_event: Optional event to signal shutdown.
+    """
     print("Scheduler started")
     while True:
+        # Check for shutdown
+        if shutdown_event is not None and shutdown_event.is_set():
+            print("Scheduler shutting down...")
+            break
+
         try:
             check_time_rules(config, services)
             check_event_rules(config, services)
             check_weekly_diary(config, services)
+            check_triggered_cleanup(config)
         except Exception as e:
             print(f"Scheduler error: {e}")
-        time.sleep(60)
+
+        # Use event wait for responsive shutdown, fall back to sleep
+        if shutdown_event is not None:
+            shutdown_event.wait(timeout=60)
+        else:
+            time.sleep(60)
 
 
 def check_time_rules(config: Config, services: Services) -> None:
-    """Check and fire time-based rules."""
-    rules_data = load_rules(config)
+    """Check and fire time-based rules.
+
+    Uses timezone-aware datetimes throughout for correct DST handling.
+    croniter preserves timezone info when given an aware datetime.
+    """
+    rules_data = load_rules_safe(config)
     local_tz = ZoneInfo(config.timezone)
     now = datetime.now(local_tz)
 
@@ -66,28 +92,35 @@ def check_time_rules(config: Config, services: Services) -> None:
                 continue
 
             try:
-                # croniter works with naive datetimes, so use naive local time
-                now_naive = now.replace(tzinfo=None)
-                cron = croniter(rule.schedule, now_naive - timedelta(minutes=1))
-                next_fire = cron.get_next(datetime)  # Returns naive datetime
+                # croniter preserves timezone when given aware datetime
+                # Start from 1 minute ago to find if current minute should fire
+                cron = croniter(rule.schedule, now - timedelta(minutes=1))
+                next_fire = cron.get_next(datetime)  # Returns aware datetime
 
-                # Fire if next scheduled time is within this minute (naive comparison)
-                minute_start = now_naive.replace(second=0, microsecond=0)
+                # Fire if next scheduled time is within this minute
+                minute_start = now.replace(second=0, microsecond=0)
                 minute_end = minute_start + timedelta(minutes=1)
                 if minute_start <= next_fire < minute_end:
                     # Check last_fired to prevent double-firing
+                    # Use 55 seconds (just under 60s interval) to allow every-minute cron jobs
                     if rule.last_fired:
-                        last = datetime.fromisoformat(rule.last_fired)
-                        # Make last_fired naive for comparison if it has tzinfo
-                        if last.tzinfo is not None:
-                            last = last.replace(tzinfo=None)
-                        if (now_naive - last).total_seconds() < 120:
-                            continue
+                        try:
+                            last = datetime.fromisoformat(rule.last_fired)
+                            # Ensure last_fired is timezone-aware for comparison
+                            if last.tzinfo is None:
+                                last = last.replace(tzinfo=local_tz)
+                            if (now - last).total_seconds() < 55:
+                                continue
+                        except (ValueError, TypeError):
+                            # Invalid last_fired format - proceed with firing
+                            pass
 
                     print(f"Firing time rule {rule.id} for {email}: {rule.action}")
                     execute_action(rule, email, config, services)
                     update_rule_last_fired(email, rule.id, config)
 
+            except CroniterBadCronError as e:
+                print(f"Invalid cron expression in rule {rule.id}: {rule.schedule!r} - {e}")
             except Exception as e:
                 print(f"Error checking time rule {rule.id}: {e}")
 
@@ -97,7 +130,7 @@ def check_event_rules(config: Config, services: Services) -> None:
     if not services.calendar_service:
         return
 
-    rules_data = load_rules(config)
+    rules_data = load_rules_safe(config)
     local_tz = ZoneInfo(config.timezone)
 
     # Get events for next 30 days
@@ -213,7 +246,16 @@ def execute_action(
 
 
 def send_weekly_schedule(email: str, config: Config, services: Services) -> None:
-    """Send upcoming week's calendar and weather forecast to user."""
+    """Send upcoming week's calendar and weather forecast to user.
+
+    Security: Validates recipient against allowed_senders whitelist.
+    """
+    # Security: Validate recipient against allowed senders whitelist
+    allowed_senders_lower = {s.lower() for s in config.allowed_senders}
+    if email.lower() not in allowed_senders_lower:
+        print(f"Security: Blocked weekly schedule to non-whitelisted recipient: {email}")
+        return
+
     if not services.calendar_service:
         print("Cannot send weekly schedule: no calendar service")
         return
@@ -223,8 +265,8 @@ def send_weekly_schedule(email: str, config: Config, services: Services) -> None
             services.calendar_service, max_results_per_calendar=20
         )
 
-        # Get weather forecast
-        forecast_data = get_weekly_forecast()
+        # Get weather forecast (use config timezone)
+        forecast_data = get_weekly_forecast(timezone=config.timezone)
 
         # Build plain text version
         weather_text = format_forecast_for_email(forecast_data)
@@ -264,7 +306,16 @@ def send_weekly_schedule(email: str, config: Config, services: Services) -> None
 def send_custom_reminder(
     rule: Rule, email: str, config: Config, event: dict[str, Any] | None = None
 ) -> None:
-    """Send a custom reminder email."""
+    """Send a custom reminder email.
+
+    Security: Validates recipient against allowed_senders whitelist.
+    """
+    # Security: Validate recipient against allowed senders whitelist
+    allowed_senders_lower = {s.lower() for s in config.allowed_senders}
+    if email.lower() not in allowed_senders_lower:
+        print(f"Security: Blocked custom reminder to non-whitelisted recipient: {email}")
+        return
+
     template = rule.params.get("message_template", "Reminder: {event_summary}")
 
     if event:
@@ -335,6 +386,27 @@ def check_weekly_diary(config: Config, services: Services) -> None:
             generate_diary_for_user(email, config, services)
         except Exception as e:
             print(f"Error generating diary for {email}: {e}")
+
+
+def check_triggered_cleanup(config: Config) -> None:
+    """Clean up old triggered event entries daily at 3am.
+
+    This prevents the triggered events file from growing unboundedly.
+    """
+    local_tz = ZoneInfo(config.timezone)
+    now = datetime.now(local_tz)
+
+    # Only run at 3am
+    if now.hour != 3:
+        return
+
+    # Only run once per hour (check minute)
+    if now.minute > 1:
+        return
+
+    removed = cleanup_old_triggered(config, max_age_days=90)
+    if removed > 0:
+        print(f"Cleaned up {removed} old triggered event entries")
 
 
 def generate_diary_for_user(email: str, config: Config, services: Services) -> None:

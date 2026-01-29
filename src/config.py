@@ -8,8 +8,45 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
+
+
+def _parse_int_env(name: str, default: int) -> int:
+    """Parse an integer environment variable with fallback to default.
+
+    Args:
+        name: Environment variable name.
+        default: Default value if not set or invalid.
+
+    Returns:
+        Parsed integer value or default.
+    """
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def _validate_timezone(tz_str: str, default: str = "America/New_York") -> str:
+    """Validate a timezone string.
+
+    Args:
+        tz_str: Timezone string to validate.
+        default: Default timezone if invalid.
+
+    Returns:
+        Valid timezone string.
+    """
+    try:
+        ZoneInfo(tz_str)
+        return tz_str
+    except (KeyError, ValueError):
+        return default
 
 
 def _get_project_root() -> Path:
@@ -67,13 +104,36 @@ class Config:
     default_calendar: str
 
 
+def _validate_required_env_vars() -> list[str]:
+    """Check for missing required environment variables.
+
+    Returns:
+        List of missing variable names.
+    """
+    required = ["GEMINI_API_KEY", "EMAIL_USER", "EMAIL_PASS", "ALLOWED_SENDERS"]
+    missing = []
+    for var in required:
+        value = os.getenv(var)
+        if not value or not value.strip():
+            missing.append(var)
+    return missing
+
+
 @lru_cache(maxsize=1)
 def get_config() -> Config:
-    """Load and return configuration. Cached after first call."""
+    """Load and return configuration. Cached after first call.
+
+    Warns if required environment variables are missing.
+    """
     project_root = _get_project_root()
 
     # Single load_dotenv call for entire application
     load_dotenv(project_root / ".env")
+
+    # Warn about missing required variables
+    missing = _validate_required_env_vars()
+    if missing:
+        print(f"Warning: Missing required environment variables: {', '.join(missing)}")
 
     # Parse allowed senders
     allowed_senders_env = os.getenv("ALLOWED_SENDERS", "")
@@ -96,10 +156,10 @@ def get_config() -> Config:
         email_pass=os.getenv("EMAIL_PASS", ""),
         allowed_senders=allowed_senders,
         admin_emails=admin_emails,
-        poll_interval=int(os.getenv("POLL_INTERVAL", "60")),
+        poll_interval=_parse_int_env("POLL_INTERVAL", 60),
         imap_server=os.getenv("IMAP_SERVER", "imap.gmail.com"),
         smtp_server=os.getenv("SMTP_SERVER", "smtp.gmail.com"),
-        smtp_port=int(os.getenv("SMTP_PORT", "587")),
+        smtp_port=_parse_int_env("SMTP_PORT", 587),
 
         # Paths
         project_root=project_root,
@@ -117,9 +177,9 @@ def get_config() -> Config:
         credentials_path=project_root / "credentials.json",
 
         # Task processing
-        max_task_retries=int(os.getenv("MAX_TASK_RETRIES", "3")),
+        max_task_retries=_parse_int_env("MAX_TASK_RETRIES", 3),
 
         # Calendar settings
-        timezone=os.getenv("TIMEZONE", "America/New_York"),
+        timezone=_validate_timezone(os.getenv("TIMEZONE", "America/New_York")),
         default_calendar=os.getenv("DEFAULT_CALENDAR", "primary"),
     )

@@ -1,4 +1,11 @@
-"""Tests for src/agents/tools/_context.py - Thread-safe global context management."""
+"""Tests for src/agents/tools/_context.py - Thread-safe global context management.
+
+Design Notes:
+- Services: Global singleton, thread-safe read/write
+- Request Context: Shared dict (NOT thread-local) for ADK sub-agent access
+  ADK runs sub-agents in separate threads that need the SAME context values.
+  Tasks are processed sequentially, so only one context is active at a time.
+"""
 
 import threading
 import time
@@ -8,11 +15,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.agents.tools._context import (
-    _request_context,
-    _services,
     clear_request_context,
+    get_body,
+    get_reply_to,
     get_request_context,
     get_services,
+    get_thread_id,
+    get_user_email,
     set_request_context,
     set_services,
 )
@@ -26,11 +35,11 @@ from src.agents.tools._context import (
 @pytest.fixture(autouse=True)
 def reset_context():
     """Reset global context before and after each test."""
+    import src.agents.tools._context as ctx
+
     # Clear before test
     clear_request_context()
     # Reset services to None
-    import src.agents.tools._context as ctx
-
     with ctx._lock:
         ctx._services = None
 
@@ -274,190 +283,165 @@ class TestClearRequestContext:
 
 
 # =============================================================================
-# Tests for thread-local isolation
+# Tests for shared context (ADK design)
 # =============================================================================
 
 
-class TestThreadLocalIsolation:
-    """Tests for thread-local isolation of request context."""
+class TestSharedContext:
+    """Tests for shared context behavior (ADK sub-agent design).
 
-    def test_different_threads_have_isolated_context(self):
-        """Each thread should have its own isolated request context."""
-        results = {}
-        barrier = threading.Barrier(3)
+    The request context is intentionally SHARED across threads, not isolated.
+    This is because ADK runs sub-agents in separate threads that need access
+    to the same context values set by the orchestrator. Tasks are processed
+    sequentially, so only one context is active at any time.
+    """
 
-        def thread_worker(thread_id: str):
-            # Set context for this thread
-            set_request_context(
-                user_email=f"user{thread_id}@example.com",
-                thread_id=f"thread-{thread_id}",
-                reply_to=f"reply{thread_id}@example.com",
-                body=f"Body for thread {thread_id}",
-            )
-
-            # Wait for all threads to set their context
-            barrier.wait()
-
-            # Small delay to allow potential interference
-            time.sleep(0.01)
-
-            # Read back context - should still be our values
-            context = get_request_context()
-            results[thread_id] = context
-
-        threads = [
-            threading.Thread(target=thread_worker, args=(str(i),)) for i in range(3)
-        ]
-
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        # Verify each thread got its own context
-        for thread_id in ["0", "1", "2"]:
-            assert results[thread_id]["user_email"] == f"user{thread_id}@example.com"
-            assert results[thread_id]["thread_id"] == f"thread-{thread_id}"
-            assert results[thread_id]["reply_to"] == f"reply{thread_id}@example.com"
-            assert results[thread_id]["body"] == f"Body for thread {thread_id}"
-
-    def test_thread_pool_executor_isolation(self):
-        """ThreadPoolExecutor workers should have isolated contexts."""
-        results = {}
-
-        def worker(worker_id: int) -> dict:
-            # Set unique context for this worker
-            set_request_context(
-                user_email=f"worker{worker_id}@example.com",
-                thread_id=f"thread-{worker_id}",
-                reply_to=f"reply{worker_id}@example.com",
-                body=f"Body {worker_id}",
-            )
-
-            # Simulate some work
-            time.sleep(0.01)
-
-            # Return the context we read
-            return {"worker_id": worker_id, "context": get_request_context()}
-
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [executor.submit(worker, i) for i in range(10)]
-
-            for future in as_completed(futures):
-                result = future.result()
-                worker_id = result["worker_id"]
-                context = result["context"]
-
-                # Each worker should see its own context
-                assert context["user_email"] == f"worker{worker_id}@example.com"
-                assert context["thread_id"] == f"thread-{worker_id}"
-                results[worker_id] = context
-
-        assert len(results) == 10
-
-    def test_main_thread_unaffected_by_worker_threads(self):
-        """Main thread context should not be affected by worker threads."""
-        # Set context in main thread
+    def test_context_shared_across_threads(self):
+        """Context should be shared across threads (ADK sub-agent pattern)."""
+        # Orchestrator sets context in main thread
         set_request_context(
-            user_email="main@example.com",
-            thread_id="main-thread",
-            reply_to="main-reply@example.com",
-            body="Main thread body",
+            user_email="user@example.com",
+            thread_id="thread-123",
+            reply_to="reply@example.com",
+            body="Original request body",
         )
 
-        def worker():
-            set_request_context(
-                user_email="worker@example.com",
-                thread_id="worker-thread",
-                reply_to="worker@example.com",
-                body="Worker body",
-            )
-            time.sleep(0.01)
+        sub_agent_context = {}
 
-        threads = [threading.Thread(target=worker) for _ in range(5)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        def sub_agent_thread():
+            # Sub-agent reads the same context (simulating ADK sub-agent)
+            sub_agent_context.update(get_request_context())
 
-        # Main thread context should be unchanged
-        result = get_request_context()
-        assert result["user_email"] == "main@example.com"
-        assert result["thread_id"] == "main-thread"
-        assert result["reply_to"] == "main-reply@example.com"
-        assert result["body"] == "Main thread body"
-
-    def test_clearing_context_in_one_thread_does_not_affect_others(self):
-        """Clearing context in one thread should not affect other threads."""
-        results = {}
-        barrier = threading.Barrier(2)
-        clear_event = threading.Event()
-
-        def setter_thread():
-            set_request_context(
-                user_email="setter@example.com",
-                thread_id="setter-thread",
-                reply_to="setter@example.com",
-                body="Setter body",
-            )
-            barrier.wait()  # Signal ready
-            clear_event.wait()  # Wait for clearer to clear
-            time.sleep(0.01)  # Give time for clear to complete
-            results["setter"] = get_request_context()
-
-        def clearer_thread():
-            set_request_context(
-                user_email="clearer@example.com",
-                thread_id="clearer-thread",
-                reply_to="clearer@example.com",
-                body="Clearer body",
-            )
-            barrier.wait()  # Wait for setter
-            clear_request_context()  # Clear our own context
-            clear_event.set()  # Signal that we've cleared
-            results["clearer"] = get_request_context()
-
-        t1 = threading.Thread(target=setter_thread)
-        t2 = threading.Thread(target=clearer_thread)
-
-        t1.start()
-        t2.start()
-        t1.join()
-        t2.join()
-
-        # Setter thread should still have its context
-        assert results["setter"]["user_email"] == "setter@example.com"
-
-        # Clearer thread should have empty context
-        assert results["clearer"]["user_email"] == ""
-
-    def test_new_thread_has_default_context(self):
-        """A new thread should start with default (empty) context."""
-        # Set context in main thread
-        set_request_context(
-            user_email="main@example.com",
-            thread_id="main-thread",
-            reply_to="main@example.com",
-            body="Main body",
-        )
-
-        new_thread_context = {}
-
-        def new_thread():
-            # Don't set any context - just read
-            new_thread_context.update(get_request_context())
-
-        t = threading.Thread(target=new_thread)
+        t = threading.Thread(target=sub_agent_thread)
         t.start()
         t.join()
 
-        # New thread should have empty context
-        assert new_thread_context == {
-            "user_email": "",
-            "thread_id": "",
-            "reply_to": "",
-            "body": "",
-        }
+        # Sub-agent should see the orchestrator's context
+        assert sub_agent_context["user_email"] == "user@example.com"
+        assert sub_agent_context["thread_id"] == "thread-123"
+        assert sub_agent_context["reply_to"] == "reply@example.com"
+        assert sub_agent_context["body"] == "Original request body"
+
+    def test_sub_agent_sees_latest_context(self):
+        """Sub-agent threads should see the latest context values."""
+        results = []
+
+        def sub_agent_reader():
+            # Small delay to ensure main thread has set context
+            time.sleep(0.01)
+            results.append(get_request_context())
+
+        # Start sub-agent thread before setting context
+        t = threading.Thread(target=sub_agent_reader)
+        t.start()
+
+        # Orchestrator sets context
+        set_request_context(
+            user_email="orchestrator@example.com",
+            thread_id="orchestrator-thread",
+            reply_to="orchestrator@example.com",
+            body="Orchestrator body",
+        )
+
+        t.join()
+
+        # Sub-agent should have read the context set by orchestrator
+        assert len(results) == 1
+        assert results[0]["user_email"] == "orchestrator@example.com"
+
+    def test_clear_context_affects_all_threads(self):
+        """Clearing context should affect all threads (shared state)."""
+        # Set context
+        set_request_context(
+            user_email="user@example.com",
+            thread_id="thread-123",
+            reply_to="reply@example.com",
+            body="Some body",
+        )
+
+        results = {}
+        barrier = threading.Barrier(2)
+
+        def reader_thread():
+            barrier.wait()  # Wait for clear
+            results["after_clear"] = get_request_context()
+
+        t = threading.Thread(target=reader_thread)
+        t.start()
+
+        # Clear context
+        clear_request_context()
+        barrier.wait()  # Signal reader
+
+        t.join()
+
+        # Reader should see cleared context
+        assert results["after_clear"]["user_email"] == ""
+        assert results["after_clear"]["thread_id"] == ""
+
+    def test_sequential_task_processing_pattern(self):
+        """Simulate sequential task processing with context per task."""
+        results = []
+
+        def process_task(task_id: int) -> dict:
+            """Simulate orchestrator processing a task."""
+            # Set context for this task
+            set_request_context(
+                user_email=f"user{task_id}@example.com",
+                thread_id=f"thread-{task_id}",
+                reply_to=f"reply{task_id}@example.com",
+                body=f"Body for task {task_id}",
+            )
+
+            # Simulate sub-agent reading context
+            context = get_request_context()
+
+            # Clear context after task
+            clear_request_context()
+
+            return {"task_id": task_id, "context": context}
+
+        # Process tasks sequentially (as the orchestrator does)
+        for i in range(5):
+            result = process_task(i)
+            results.append(result)
+
+        # Each task should have gotten its own context
+        for i, result in enumerate(results):
+            assert result["context"]["user_email"] == f"user{i}@example.com"
+            assert result["context"]["thread_id"] == f"thread-{i}"
+
+    def test_concurrent_reads_are_safe(self):
+        """Multiple threads reading context concurrently should be safe."""
+        set_request_context(
+            user_email="shared@example.com",
+            thread_id="shared-thread",
+            reply_to="shared@example.com",
+            body="Shared body",
+        )
+
+        results = []
+        errors = []
+
+        def reader():
+            try:
+                for _ in range(100):
+                    ctx = get_request_context()
+                    if ctx["user_email"] != "shared@example.com":
+                        errors.append(f"Unexpected email: {ctx['user_email']}")
+                    results.append(ctx)
+            except Exception as e:
+                errors.append(str(e))
+
+        threads = [threading.Thread(target=reader) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0, f"Errors: {errors}"
+        assert len(results) == 1000
+        assert all(r["user_email"] == "shared@example.com" for r in results)
 
 
 # =============================================================================
@@ -491,10 +475,13 @@ class TestDefaultValues:
         assert all(v == "" for v in result.values())
 
     def test_partial_context_returns_defaults_for_unset(self):
-        """If thread-local attributes are missing, defaults should be returned."""
-        # Directly manipulate thread-local to simulate partial state
-        _request_context.user_email = "partial@example.com"
-        # Don't set thread_id, reply_to, body
+        """If some context keys are missing, defaults should be returned."""
+        import src.agents.tools._context as ctx
+
+        # Directly manipulate shared dict to simulate partial state
+        with ctx._context_lock:
+            ctx._request_context["user_email"] = "partial@example.com"
+            # Don't set thread_id, reply_to, body
 
         result = get_request_context()
 
@@ -502,6 +489,75 @@ class TestDefaultValues:
         assert result["thread_id"] == ""
         assert result["reply_to"] == ""
         assert result["body"] == ""
+
+
+# =============================================================================
+# Tests for convenience accessors
+# =============================================================================
+
+
+class TestConvenienceAccessors:
+    """Tests for convenience accessor functions."""
+
+    def test_get_user_email(self):
+        """get_user_email() should return user email from context."""
+        set_request_context(
+            user_email="user@example.com",
+            thread_id="thread-123",
+            reply_to="reply@example.com",
+            body="Test body",
+        )
+
+        assert get_user_email() == "user@example.com"
+
+    def test_get_user_email_default(self):
+        """get_user_email() should return empty string when not set."""
+        assert get_user_email() == ""
+
+    def test_get_reply_to(self):
+        """get_reply_to() should return reply-to address from context."""
+        set_request_context(
+            user_email="user@example.com",
+            thread_id="thread-123",
+            reply_to="reply@example.com",
+            body="Test body",
+        )
+
+        assert get_reply_to() == "reply@example.com"
+
+    def test_get_reply_to_default(self):
+        """get_reply_to() should return empty string when not set."""
+        assert get_reply_to() == ""
+
+    def test_get_thread_id(self):
+        """get_thread_id() should return thread ID from context."""
+        set_request_context(
+            user_email="user@example.com",
+            thread_id="thread-123",
+            reply_to="reply@example.com",
+            body="Test body",
+        )
+
+        assert get_thread_id() == "thread-123"
+
+    def test_get_thread_id_default(self):
+        """get_thread_id() should return empty string when not set."""
+        assert get_thread_id() == ""
+
+    def test_get_body(self):
+        """get_body() should return message body from context."""
+        set_request_context(
+            user_email="user@example.com",
+            thread_id="thread-123",
+            reply_to="reply@example.com",
+            body="Test body content",
+        )
+
+        assert get_body() == "Test body content"
+
+    def test_get_body_default(self):
+        """get_body() should return empty string when not set."""
+        assert get_body() == ""
 
 
 # =============================================================================
@@ -513,7 +569,7 @@ class TestIntegration:
     """Integration tests combining services and request context."""
 
     def test_services_and_context_independent(self, mock_services):
-        """Services (global) and request context (thread-local) should be independent."""
+        """Services (global) and request context (shared) should be independent."""
         # Set services
         set_services(mock_services)
 
@@ -534,36 +590,18 @@ class TestIntegration:
         # Request context should be cleared
         assert get_request_context()["user_email"] == ""
 
-    def test_concurrent_services_and_context_operations(self, mock_services):
-        """Concurrent operations on services and context should not interfere."""
+    def test_concurrent_services_access_is_safe(self, mock_services):
+        """Concurrent access to services should be thread-safe."""
         set_services(mock_services)
         errors = []
 
         def worker(worker_id: int):
             try:
-                for _ in range(50):
-                    # Set and get request context
-                    set_request_context(
-                        user_email=f"worker{worker_id}@example.com",
-                        thread_id=f"thread-{worker_id}",
-                        reply_to=f"reply{worker_id}@example.com",
-                        body=f"Body {worker_id}",
-                    )
-
-                    context = get_request_context()
-                    if context["user_email"] != f"worker{worker_id}@example.com":
-                        errors.append(f"Context mismatch in worker {worker_id}")
-
+                for _ in range(100):
                     # Get services (should always return the same mock)
                     svc = get_services()
                     if svc is not mock_services:
                         errors.append(f"Services mismatch in worker {worker_id}")
-
-                    # Clear and verify
-                    clear_request_context()
-                    if get_request_context()["user_email"] != "":
-                        errors.append(f"Clear failed in worker {worker_id}")
-
             except Exception as e:
                 errors.append(f"Exception in worker {worker_id}: {e}")
 
@@ -573,3 +611,28 @@ class TestIntegration:
                 future.result()  # Raise any exceptions
 
         assert len(errors) == 0, f"Errors occurred: {errors}"
+
+    def test_sequential_context_with_services(self, mock_services):
+        """Sequential context operations with services should work correctly."""
+        set_services(mock_services)
+
+        # Simulate processing 5 tasks sequentially
+        for i in range(5):
+            set_request_context(
+                user_email=f"user{i}@example.com",
+                thread_id=f"thread-{i}",
+                reply_to=f"reply{i}@example.com",
+                body=f"Body {i}",
+            )
+
+            # Verify context
+            ctx = get_request_context()
+            assert ctx["user_email"] == f"user{i}@example.com"
+            assert ctx["thread_id"] == f"thread-{i}"
+
+            # Verify services still accessible
+            assert get_services() is mock_services
+
+            # Clear context (as orchestrator does after each task)
+            clear_request_context()
+            assert get_request_context()["user_email"] == ""

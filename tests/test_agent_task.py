@@ -135,12 +135,13 @@ class TestCreateAgentTask:
     def test_send_email_creates_task_file(self, mock_config):
         """Should create task file for valid send_email action."""
         with patch("src.agents.tools.task_tools.get_config", return_value=mock_config):
-            with patch("src.agents.tools.task_tools.get_user_email", return_value="user@example.com"):
+            # Use an allowed sender email to pass the security check
+            with patch("src.agents.tools.task_tools.get_user_email", return_value="allowed@example.com"):
                 with patch("src.agents.tools.task_tools.get_thread_id", return_value="thread-123"):
                     result = create_agent_task(
                         action="send_email",
                         params={
-                            "to_address": "allowed@example.com",
+                            "to_address": "other@example.com",
                             "subject": "Welcome",
                             "body": "Welcome to the system!",
                         },
@@ -161,9 +162,9 @@ class TestCreateAgentTask:
 
         assert task_data["task_type"] == "agent_task"
         assert task_data["action"] == "send_email"
-        assert task_data["params"]["to_address"] == "allowed@example.com"
+        assert task_data["params"]["to_address"] == "other@example.com"
         assert task_data["created_by"] == "RouterAgent"
-        assert task_data["original_sender"] == "user@example.com"
+        assert task_data["original_sender"] == "allowed@example.com"
         assert task_data["original_thread_id"] == "thread-123"
 
     def test_no_user_context_returns_error(self, mock_config):

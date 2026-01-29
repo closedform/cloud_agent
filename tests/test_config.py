@@ -7,7 +7,64 @@ from unittest.mock import patch
 
 import pytest
 
-from src.config import Config, _get_project_root, get_config
+from src.config import Config, _get_project_root, _parse_int_env, _validate_timezone, get_config
+
+
+class TestParseIntEnv:
+    """Tests for _parse_int_env helper function."""
+
+    def test_returns_default_when_not_set(self):
+        """Should return default when env var is not set."""
+        with patch.dict(os.environ, {}, clear=True):
+            assert _parse_int_env("NONEXISTENT_VAR", 42) == 42
+
+    def test_parses_valid_integer(self):
+        """Should parse valid integer string."""
+        with patch.dict(os.environ, {"TEST_INT": "123"}, clear=True):
+            assert _parse_int_env("TEST_INT", 0) == 123
+
+    def test_returns_default_for_invalid_integer(self):
+        """Should return default when value is not a valid integer."""
+        with patch.dict(os.environ, {"TEST_INT": "not_a_number"}, clear=True):
+            assert _parse_int_env("TEST_INT", 99) == 99
+
+    def test_returns_default_for_empty_string(self):
+        """Should return default for empty string."""
+        with patch.dict(os.environ, {"TEST_INT": ""}, clear=True):
+            assert _parse_int_env("TEST_INT", 50) == 50
+
+    def test_handles_negative_integers(self):
+        """Should handle negative integers."""
+        with patch.dict(os.environ, {"TEST_INT": "-10"}, clear=True):
+            assert _parse_int_env("TEST_INT", 0) == -10
+
+    def test_handles_float_string(self):
+        """Should return default for float strings (not valid int)."""
+        with patch.dict(os.environ, {"TEST_INT": "3.14"}, clear=True):
+            assert _parse_int_env("TEST_INT", 0) == 0
+
+
+class TestValidateTimezone:
+    """Tests for _validate_timezone helper function."""
+
+    def test_valid_timezone_returned(self):
+        """Should return valid timezone string as-is."""
+        assert _validate_timezone("America/New_York") == "America/New_York"
+        assert _validate_timezone("Europe/London") == "Europe/London"
+        assert _validate_timezone("UTC") == "UTC"
+
+    def test_invalid_timezone_returns_default(self):
+        """Should return default for invalid timezone."""
+        assert _validate_timezone("Invalid/Timezone") == "America/New_York"
+        assert _validate_timezone("Not_A_Timezone") == "America/New_York"
+
+    def test_custom_default(self):
+        """Should use custom default when provided."""
+        assert _validate_timezone("Invalid/TZ", "UTC") == "UTC"
+
+    def test_empty_string_returns_default(self):
+        """Should return default for empty string."""
+        assert _validate_timezone("") == "America/New_York"
 
 
 class TestConfig:
@@ -518,3 +575,56 @@ class TestConfigIntegration:
         config1 = get_config()
         config_set = {config1}
         assert config1 in config_set
+
+
+class TestConfigRobustness:
+    """Tests for config robustness with invalid environment values."""
+
+    @pytest.fixture(autouse=True)
+    def clear_config_cache(self):
+        """Clear config cache before and after each test."""
+        get_config.cache_clear()
+        yield
+        get_config.cache_clear()
+
+    def test_invalid_poll_interval_uses_default(self):
+        """Invalid POLL_INTERVAL should fall back to default."""
+        with patch.dict(os.environ, {"POLL_INTERVAL": "not_a_number"}, clear=True):
+            get_config.cache_clear()
+            config = get_config()
+            assert config.poll_interval == 60  # default
+
+    def test_invalid_smtp_port_uses_default(self):
+        """Invalid SMTP_PORT should fall back to default."""
+        with patch.dict(os.environ, {"SMTP_PORT": "abc"}, clear=True):
+            get_config.cache_clear()
+            config = get_config()
+            assert config.smtp_port == 587  # default
+
+    def test_invalid_max_task_retries_uses_default(self):
+        """Invalid MAX_TASK_RETRIES should fall back to default."""
+        with patch.dict(os.environ, {"MAX_TASK_RETRIES": "many"}, clear=True):
+            get_config.cache_clear()
+            config = get_config()
+            assert config.max_task_retries == 3  # default
+
+    def test_invalid_timezone_uses_default(self):
+        """Invalid TIMEZONE should fall back to default."""
+        with patch.dict(os.environ, {"TIMEZONE": "Invalid/NotATimezone"}, clear=True):
+            get_config.cache_clear()
+            config = get_config()
+            assert config.timezone == "America/New_York"  # default
+
+    def test_empty_integer_values_use_defaults(self):
+        """Empty integer env vars should fall back to defaults."""
+        env = {
+            "POLL_INTERVAL": "",
+            "SMTP_PORT": "",
+            "MAX_TASK_RETRIES": "",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            get_config.cache_clear()
+            config = get_config()
+            assert config.poll_interval == 60
+            assert config.smtp_port == 587
+            assert config.max_task_retries == 3

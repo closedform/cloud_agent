@@ -1,6 +1,7 @@
 """Task and Reminder data models."""
 
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -39,12 +40,28 @@ class Task:
         """Create Task from dictionary.
 
         Raises:
-            ValueError: If required fields are missing.
+            ValueError: If required fields are missing or have invalid types.
         """
         required = ("id", "subject", "body", "sender", "reply_to")
         missing = [f for f in required if f not in data]
         if missing:
             raise ValueError(f"Missing required fields: {missing}")
+
+        # Validate types for required string fields
+        for field_name in required:
+            value = data[field_name]
+            if not isinstance(value, str):
+                raise ValueError(f"Field '{field_name}' must be a string, got {type(value).__name__}")
+
+        # Validate optional fields with expected types
+        attachments = data.get("attachments", [])
+        if not isinstance(attachments, list):
+            raise ValueError(f"Field 'attachments' must be a list, got {type(attachments).__name__}")
+
+        # Use default timestamp only when created_at is missing, not when empty string
+        created_at = data.get("created_at")
+        if created_at is None:
+            created_at = datetime.now().isoformat()
 
         return cls(
             id=data["id"],
@@ -52,8 +69,8 @@ class Task:
             body=data["body"],
             sender=data["sender"],
             reply_to=data["reply_to"],
-            attachments=data.get("attachments", []),
-            created_at=data.get("created_at", datetime.now().isoformat()),
+            attachments=attachments,
+            created_at=created_at,
             intent=data.get("intent"),
             classification=data.get("classification"),
         )
@@ -67,9 +84,12 @@ class Task:
         reply_to: str | None = None,
         attachments: list[str] | None = None,
     ) -> "Task":
-        """Factory method to create a new task with auto-generated ID."""
+        """Factory method to create a new task with auto-generated ID.
+
+        Uses UUID to guarantee uniqueness, even with rapid consecutive calls.
+        """
         return cls(
-            id=str(int(time.time() * 1000)),
+            id=uuid.uuid4().hex,
             subject=subject,
             body=body,
             sender=sender,
@@ -103,19 +123,30 @@ class Reminder:
         """Create Reminder from dictionary.
 
         Raises:
-            ValueError: If required fields are missing.
+            ValueError: If required fields are missing or have invalid types.
         """
         required = ("id", "message", "datetime", "reply_to")
         missing = [f for f in required if f not in data]
         if missing:
             raise ValueError(f"Missing required fields: {missing}")
 
+        # Validate types for required string fields
+        for field_name in required:
+            value = data[field_name]
+            if not isinstance(value, str):
+                raise ValueError(f"Field '{field_name}' must be a string, got {type(value).__name__}")
+
+        # Use default timestamp only when created_at is missing, not when empty string
+        created_at = data.get("created_at")
+        if created_at is None:
+            created_at = datetime.now().isoformat()
+
         return cls(
             id=data["id"],
             message=data["message"],
             datetime=data["datetime"],
             reply_to=data["reply_to"],
-            created_at=data.get("created_at", datetime.now().isoformat()),
+            created_at=created_at,
         )
 
     @classmethod
@@ -126,9 +157,12 @@ class Reminder:
         reply_to: str,
         task_id: str | None = None,
     ) -> "Reminder":
-        """Factory method to create a new reminder."""
+        """Factory method to create a new reminder.
+
+        Uses UUID to guarantee uniqueness when task_id is not provided.
+        """
         return cls(
-            id=task_id or str(int(time.time() * 1000)),
+            id=task_id or uuid.uuid4().hex,
             message=message,
             datetime=reminder_datetime,
             reply_to=reply_to,

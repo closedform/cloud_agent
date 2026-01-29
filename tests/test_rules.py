@@ -11,6 +11,7 @@ import pytest
 from src.rules import (
     Rule,
     add_rule,
+    cleanup_old_triggered,
     delete_rule,
     get_user_rules,
     is_event_triggered,
@@ -744,13 +745,16 @@ class TestTriggeredEvents:
 
     def test_mark_event_triggered(self, test_config):
         """Test marking an event as triggered."""
-        before = datetime.now()
+        from zoneinfo import ZoneInfo
+
+        local_tz = ZoneInfo(test_config.timezone)
+        before = datetime.now(local_tz)
         mark_event_triggered("rule-123", "event-456", test_config)
-        after = datetime.now()
+        after = datetime.now(local_tz)
 
         triggered = load_triggered(test_config)
         assert "rule-123:event-456" in triggered
-        # Verify timestamp is reasonable
+        # Verify timestamp is reasonable (timezone-aware comparison)
         timestamp = datetime.fromisoformat(triggered["rule-123:event-456"])
         assert before <= timestamp <= after
 
@@ -959,3 +963,135 @@ class TestEdgeCases:
         restored = Rule.from_dict(data)
 
         assert restored.trigger == nested_trigger
+
+class TestCleanupOldTriggered:
+    """Tests for cleanup_old_triggered function."""
+
+    def test_cleanup_empty_file(self, test_config):
+        """Test cleanup when no triggered file exists."""
+        removed = cleanup_old_triggered(test_config)
+        assert removed == 0
+
+    def test_cleanup_no_old_entries(self, test_config):
+        """Test cleanup when all entries are recent."""
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+
+        local_tz = ZoneInfo(test_config.timezone)
+        now = datetime.now(local_tz)
+
+        # Create recent entries (within 90 days)
+        triggered_data = {
+            "rule-1:event-a": now.isoformat(),
+            "rule-2:event-b": (now - timedelta(days=30)).isoformat(),
+            "rule-3:event-c": (now - timedelta(days=89)).isoformat(),
+        }
+        test_config.triggered_file.parent.mkdir(parents=True, exist_ok=True)
+        test_config.triggered_file.write_text(json.dumps(triggered_data))
+
+        removed = cleanup_old_triggered(test_config)
+        assert removed == 0
+
+        # All entries should still be there
+        result = load_triggered(test_config)
+        assert len(result) == 3
+
+    def test_cleanup_old_entries(self, test_config):
+        """Test cleanup removes entries older than max_age_days."""
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+
+        local_tz = ZoneInfo(test_config.timezone)
+        now = datetime.now(local_tz)
+
+        # Mix of old and new entries
+        triggered_data = {
+            "rule-1:event-a": now.isoformat(),  # Recent
+            "rule-2:event-b": (now - timedelta(days=91)).isoformat(),  # Old
+            "rule-3:event-c": (now - timedelta(days=180)).isoformat(),  # Very old
+            "rule-4:event-d": (now - timedelta(days=30)).isoformat(),  # Recent
+        }
+        test_config.triggered_file.parent.mkdir(parents=True, exist_ok=True)
+        test_config.triggered_file.write_text(json.dumps(triggered_data))
+
+        removed = cleanup_old_triggered(test_config, max_age_days=90)
+        assert removed == 2
+
+        # Only recent entries should remain
+        result = load_triggered(test_config)
+        assert len(result) == 2
+        assert "rule-1:event-a" in result
+        assert "rule-4:event-d" in result
+        assert "rule-2:event-b" not in result
+        assert "rule-3:event-c" not in result
+
+    def test_cleanup_invalid_timestamps(self, test_config):
+        """Test cleanup removes entries with invalid timestamps."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        local_tz = ZoneInfo(test_config.timezone)
+        now = datetime.now(local_tz)
+
+        triggered_data = {
+            "rule-1:event-a": now.isoformat(),  # Valid
+            "rule-2:event-b": "invalid-timestamp",  # Invalid
+            "rule-3:event-c": "",  # Empty
+            "rule-4:event-d": "2026-13-45T99:99:99",  # Invalid date
+        }
+        test_config.triggered_file.parent.mkdir(parents=True, exist_ok=True)
+        test_config.triggered_file.write_text(json.dumps(triggered_data))
+
+        removed = cleanup_old_triggered(test_config)
+        assert removed == 3  # All invalid entries removed
+
+        result = load_triggered(test_config)
+        assert len(result) == 1
+        assert "rule-1:event-a" in result
+
+    def test_cleanup_custom_max_age(self, test_config):
+        """Test cleanup with custom max_age_days."""
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+
+        local_tz = ZoneInfo(test_config.timezone)
+        now = datetime.now(local_tz)
+
+        triggered_data = {
+            "rule-1:event-a": (now - timedelta(days=5)).isoformat(),
+            "rule-2:event-b": (now - timedelta(days=15)).isoformat(),
+        }
+        test_config.triggered_file.parent.mkdir(parents=True, exist_ok=True)
+        test_config.triggered_file.write_text(json.dumps(triggered_data))
+
+        # With 7 day max age, only rule-1 should remain
+        removed = cleanup_old_triggered(test_config, max_age_days=7)
+        assert removed == 1
+
+        result = load_triggered(test_config)
+        assert len(result) == 1
+        assert "rule-1:event-a" in result
+
+    def test_cleanup_naive_timestamps(self, test_config):
+        """Test cleanup handles naive (timezone-unaware) timestamps."""
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+
+        local_tz = ZoneInfo(test_config.timezone)
+        now = datetime.now(local_tz)
+
+        # Mix of aware and naive timestamps
+        triggered_data = {
+            "rule-1:event-a": now.isoformat(),  # Timezone-aware
+            "rule-2:event-b": datetime.now().isoformat(),  # Naive (no tz)
+            "rule-3:event-c": (datetime.now() - timedelta(days=91)).isoformat(),  # Naive, old
+        }
+        test_config.triggered_file.parent.mkdir(parents=True, exist_ok=True)
+        test_config.triggered_file.write_text(json.dumps(triggered_data))
+
+        removed = cleanup_old_triggered(test_config, max_age_days=90)
+        assert removed == 1  # Only the old naive one
+
+        result = load_triggered(test_config)
+        assert len(result) == 2
+

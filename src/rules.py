@@ -4,16 +4,36 @@ Rules define automated actions triggered by time (cron) or calendar events.
 """
 
 import json
-import os
-import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from croniter import croniter, CroniterBadCronError
+
 from src.config import Config
+from src.utils import atomic_write_json
+
+
+# Valid rule types
+VALID_RULE_TYPES = ("time", "event")
+
+
+def validate_cron_expression(expr: str) -> tuple[bool, str | None]:
+    """Validate a cron expression.
+
+    Returns (True, None) if valid, or (False, error_message) if invalid.
+    """
+    try:
+        # croniter validates on instantiation
+        croniter(expr)
+        return True, None
+    except CroniterBadCronError as e:
+        return False, str(e)
+    except Exception as e:
+        return False, f"Invalid cron expression: {e}"
 
 # Lock for thread-safe file operations
 _rules_lock = threading.Lock()
@@ -76,7 +96,14 @@ class Rule:
         action: str,
         params: dict[str, Any] | None = None,
     ) -> "Rule":
-        """Create a time-based rule with cron schedule."""
+        """Create a time-based rule with cron schedule.
+
+        Raises ValueError if the cron expression is invalid.
+        """
+        valid, error = validate_cron_expression(schedule)
+        if not valid:
+            raise ValueError(f"Invalid cron schedule '{schedule}': {error}")
+
         return cls(
             id=str(int(time.time() * 1000)),
             user_email=user_email,
@@ -108,37 +135,75 @@ class Rule:
 
 
 def load_rules(config: Config) -> dict[str, list[dict[str, Any]]]:
-    """Load all rules from file, returning empty dict if not found."""
+    """Load all rules from file, returning empty dict if not found.
+
+    Note: This is NOT thread-safe. Use load_rules_safe() for concurrent access.
+
+    Validates structure and filters out malformed entries to prevent crashes
+    when deserializing rules.
+    """
     if not config.rules_file.exists():
         return {}
     try:
         with open(config.rules_file, "r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
+            data = json.load(f)
+        # Validate structure
+        if not isinstance(data, dict):
+            print("Warning: Rules file has invalid structure (expected dict), returning empty")
+            return {}
+
+        # Validate and filter each user's rules list
+        validated: dict[str, list[dict[str, Any]]] = {}
+        for email, rules_list in data.items():
+            if not isinstance(rules_list, list):
+                print(f"Warning: Rules for {email} is not a list, skipping")
+                continue
+            valid_rules = []
+            for rule in rules_list:
+                if not isinstance(rule, dict):
+                    print(f"Warning: Invalid rule entry for {email} (not a dict), skipping")
+                    continue
+                # Check required fields exist
+                required = ("id", "user_email", "type", "action")
+                if not all(k in rule for k in required):
+                    missing = [k for k in required if k not in rule]
+                    print(f"Warning: Rule for {email} missing required fields {missing}, skipping")
+                    continue
+                valid_rules.append(rule)
+            if valid_rules:
+                validated[email] = valid_rules
+
+        return validated
+    except json.JSONDecodeError as e:
+        print(f"Warning: Rules file has invalid JSON: {e}")
+        return {}
+    except OSError as e:
+        print(f"Warning: Cannot read rules file: {e}")
         return {}
 
 
-def save_rules(data: dict[str, list[dict[str, Any]]], config: Config) -> None:
-    """Save rules atomically using temp file + rename."""
-    dir_path = config.rules_file.parent
-    dir_path.mkdir(parents=True, exist_ok=True)
+def load_rules_safe(config: Config) -> dict[str, list[dict[str, Any]]]:
+    """Thread-safe version of load_rules.
 
-    fd, tmp_path = tempfile.mkstemp(suffix=".tmp", dir=dir_path)
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2)
-        os.rename(tmp_path, config.rules_file)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+    Use this when reading rules from a background thread while other threads
+    may be modifying the rules file.
+    """
+    with _rules_lock:
+        return load_rules(config)
+
+
+def save_rules(data: dict[str, list[dict[str, Any]]], config: Config) -> None:
+    """Save rules atomically."""
+    atomic_write_json(data, config.rules_file)
 
 
 def get_user_rules(email: str, config: Config) -> list[Rule]:
-    """Get all rules for a user."""
-    data = load_rules(config)
+    """Get all rules for a user.
+
+    Thread-safe: acquires lock to prevent reading while another thread writes.
+    """
+    with _rules_lock:
+        data = load_rules(config)
     rules_data = data.get(email, [])
     return [Rule.from_dict(r) for r in rules_data]
 
@@ -189,45 +254,90 @@ def update_rule_last_fired(email: str, rule_id: str, config: Config) -> None:
 
 
 def load_triggered(config: Config) -> dict[str, str]:
-    """Load triggered events log."""
+    """Load triggered events log.
+
+    Note: This is NOT thread-safe. Use with _rules_lock for concurrent access.
+    """
     if not config.triggered_file.exists():
         return {}
     try:
         with open(config.triggered_file, "r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
+            data = json.load(f)
+        # Validate structure
+        if not isinstance(data, dict):
+            print(f"Warning: Triggered file has invalid structure (expected dict), returning empty")
+            return {}
+        return data
+    except json.JSONDecodeError as e:
+        print(f"Warning: Triggered file has invalid JSON: {e}")
+        return {}
+    except OSError as e:
+        print(f"Warning: Cannot read triggered file: {e}")
         return {}
 
 
 def save_triggered(data: dict[str, str], config: Config) -> None:
     """Save triggered events log atomically."""
-    dir_path = config.triggered_file.parent
-    dir_path.mkdir(parents=True, exist_ok=True)
-
-    fd, tmp_path = tempfile.mkstemp(suffix=".tmp", dir=dir_path)
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2)
-        os.rename(tmp_path, config.triggered_file)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+    atomic_write_json(data, config.triggered_file)
 
 
 def mark_event_triggered(rule_id: str, event_id: str, config: Config) -> None:
-    """Mark a rule+event combination as triggered."""
+    """Mark a rule+event combination as triggered.
+
+    Uses timezone-aware timestamp for consistency with other timestamps.
+    """
     with _rules_lock:
         triggered = load_triggered(config)
         key = f"{rule_id}:{event_id}"
-        triggered[key] = datetime.now().isoformat()
+        local_tz = ZoneInfo(config.timezone)
+        triggered[key] = datetime.now(local_tz).isoformat()
         save_triggered(triggered, config)
 
 
 def is_event_triggered(rule_id: str, event_id: str, config: Config) -> bool:
-    """Check if a rule+event combination has already been triggered."""
-    triggered = load_triggered(config)
-    key = f"{rule_id}:{event_id}"
-    return key in triggered
+    """Check if a rule+event combination has already been triggered.
+
+    Thread-safe: acquires lock to prevent reading while another thread writes.
+    """
+    with _rules_lock:
+        triggered = load_triggered(config)
+        key = f"{rule_id}:{event_id}"
+        return key in triggered
+
+
+def cleanup_old_triggered(config: Config, max_age_days: int = 90) -> int:
+    """Remove triggered event entries older than max_age_days.
+
+    Returns the number of entries removed.
+
+    This should be called periodically (e.g., weekly) to prevent unbounded
+    growth of the triggered events file.
+    """
+    with _rules_lock:
+        triggered = load_triggered(config)
+        if not triggered:
+            return 0
+
+        local_tz = ZoneInfo(config.timezone)
+        now = datetime.now(local_tz)
+        cutoff = now - timedelta(days=max_age_days)
+
+        to_remove = []
+        for key, timestamp_str in triggered.items():
+            try:
+                timestamp = datetime.fromisoformat(timestamp_str)
+                # Handle both timezone-aware and naive timestamps
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=local_tz)
+                if timestamp < cutoff:
+                    to_remove.append(key)
+            except (ValueError, TypeError):
+                # Invalid timestamp, remove it
+                to_remove.append(key)
+
+        if to_remove:
+            for key in to_remove:
+                del triggered[key]
+            save_triggered(triggered, config)
+
+        return len(to_remove)

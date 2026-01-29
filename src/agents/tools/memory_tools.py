@@ -9,6 +9,7 @@ from src.memory import (
     get_all_facts,
     get_facts_by_category,
     search_facts,
+    update_fact,
 )
 
 
@@ -47,14 +48,23 @@ def remember_fact(
     source_context = get_body()
     keyword_list = [k.strip() for k in keywords.split(",") if k.strip()]
 
+    # Validate content before attempting to store
+    if not content or not content.strip():
+        return {"status": "error", "message": "Content cannot be empty or whitespace-only"}
+
+    # Truncate source context for storage (avoid storing huge email bodies)
+    truncated_context = source_context[:200] if source_context else ""
+
     try:
         fact = add_fact(
             email=email,
             content=content,
             category=category,
-            source_context=source_context[:200],  # Truncate for storage
+            source_context=truncated_context,
             keywords=keyword_list,
         )
+    except ValueError as e:
+        return {"status": "error", "message": str(e)}
     except Exception as e:
         return {"status": "error", "message": f"Failed to store fact: {e}"}
 
@@ -173,4 +183,34 @@ def forget_fact(fact_id: str) -> dict[str, Any]:
             return {"status": "error", "message": "Fact not found"}
     except Exception as e:
         return {"status": "error", "message": f"Failed to delete fact: {e}"}
+
+
+def update_fact_content(fact_id: str, content: str) -> dict[str, Any]:
+    """Update the content of an existing fact.
+
+    Use when the user provides corrected or updated information about
+    something already stored.
+
+    Args:
+        fact_id: ID of the fact to update (from recall_facts results)
+        content: New content to replace the existing fact content
+
+    Returns:
+        Confirmation of update
+    """
+    email = get_user_email()
+    if not email:
+        return {"status": "error", "message": "No user email in context"}
+
+    # Validate content
+    if not content or not content.strip():
+        return {"status": "error", "message": "Content cannot be empty or whitespace-only"}
+
+    try:
+        if update_fact(email, fact_id, content):
+            return {"status": "success", "message": f"Fact updated to: {content}"}
+        else:
+            return {"status": "error", "message": "Fact not found"}
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to update fact: {e}"}
 

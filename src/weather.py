@@ -18,23 +18,29 @@ MANHATTAN_LON = -73.9712
 def get_weekly_forecast(
     latitude: float = MANHATTAN_LAT,
     longitude: float = MANHATTAN_LON,
+    timezone: str = "America/New_York",
 ) -> dict[str, Any]:
     """Get 7-day weather forecast.
 
     Args:
         latitude: Location latitude (default: Manhattan).
         longitude: Location longitude (default: Manhattan).
+        timezone: Timezone for the forecast (default: America/New_York).
 
     Returns:
         Dictionary with forecast data or error.
     """
+    import urllib.parse
+
     try:
+        # URL-encode the timezone to handle slashes
+        tz_encoded = urllib.parse.quote(timezone, safe="")
         url = (
             f"https://api.open-meteo.com/v1/forecast"
             f"?latitude={latitude}&longitude={longitude}"
             f"&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weathercode"
             f"&temperature_unit=fahrenheit"
-            f"&timezone=America%2FNew_York"
+            f"&timezone={tz_encoded}"
         )
 
         with urllib.request.urlopen(url, timeout=10) as response:
@@ -65,8 +71,15 @@ def get_weekly_forecast(
         }
 
     except urllib.error.URLError as e:
+        print(f"Weather API network error: {e}")
         return {"status": "error", "message": f"Network error: {e}"}
+    except json.JSONDecodeError as e:
+        print(f"Weather API returned invalid JSON: {e}")
+        return {"status": "error", "message": "Weather service returned invalid data"}
     except Exception as e:
+        print(f"Weather API unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
         return {"status": "error", "message": str(e)}
 
 

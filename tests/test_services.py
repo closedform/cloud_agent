@@ -261,10 +261,10 @@ class TestCreateServicesCalendarFailure:
         services = create_services(test_config)
 
         # Should still create services with fallback calendars
-        # Note: calendar_service is set before get_calendar_map is called,
-        # so it retains the value from get_service even when get_calendar_map fails
+        # Note: calendar_service is now reset to None when get_calendar_map fails
+        # to ensure consistent state (either both work or neither)
         assert services.gemini_client is mock_gemini
-        assert services.calendar_service is mock_calendar
+        assert services.calendar_service is None
         assert services.calendars == {"primary": "primary"}
 
     @patch("builtins.print")
@@ -380,3 +380,86 @@ class TestCreateServicesConfiguration:
         # Check that print was called with calendar info
         print_calls = [str(call) for call in mock_print.call_args_list]
         assert any("Loaded 3 calendars" in call for call in print_calls)
+
+
+class TestServicesRefreshCalendars:
+    """Tests for Services.refresh_calendars method."""
+
+    def test_refresh_calendars_returns_false_when_no_service(self, test_config):
+        """Should return False when calendar_service is None."""
+        mock_client = MagicMock()
+        services = Services(
+            gemini_client=mock_client,
+            calendar_service=None,
+            calendars={"primary": "primary"},
+        )
+
+        result = services.refresh_calendars(test_config)
+
+        assert result is False
+        assert services.calendars == {"primary": "primary"}
+
+    @patch("src.services.calendar_client.get_calendar_map")
+    def test_refresh_calendars_updates_calendars_dict(
+        self, mock_get_calendar_map, test_config
+    ):
+        """Should update calendars dict on successful refresh."""
+        mock_client = MagicMock()
+        mock_calendar = MagicMock()
+        services = Services(
+            gemini_client=mock_client,
+            calendar_service=mock_calendar,
+            calendars={"primary": "primary"},
+        )
+        mock_get_calendar_map.return_value = {"work": "work_id", "personal": "personal_id"}
+
+        result = services.refresh_calendars(test_config)
+
+        assert result is True
+        # Should have the new calendars plus primary (since it wasn't in returned map)
+        assert "work" in services.calendars
+        assert "personal" in services.calendars
+        assert "primary" in services.calendars
+        mock_get_calendar_map.assert_called_once_with(mock_calendar)
+
+    @patch("src.services.calendar_client.get_calendar_map")
+    def test_refresh_calendars_returns_false_on_error(
+        self, mock_get_calendar_map, test_config
+    ):
+        """Should return False when get_calendar_map raises exception."""
+        mock_client = MagicMock()
+        mock_calendar = MagicMock()
+        original_calendars = {"primary": "primary", "old": "old_id"}
+        services = Services(
+            gemini_client=mock_client,
+            calendar_service=mock_calendar,
+            calendars=original_calendars.copy(),
+        )
+        mock_get_calendar_map.side_effect = Exception("API timeout")
+
+        result = services.refresh_calendars(test_config)
+
+        assert result is False
+        # Calendars should remain unchanged on error
+        assert services.calendars == original_calendars
+
+    @patch("src.services.calendar_client.get_calendar_map")
+    def test_refresh_calendars_clears_old_calendars(
+        self, mock_get_calendar_map, test_config
+    ):
+        """Should clear old calendars when refreshing."""
+        mock_client = MagicMock()
+        mock_calendar = MagicMock()
+        services = Services(
+            gemini_client=mock_client,
+            calendar_service=mock_calendar,
+            calendars={"primary": "primary", "old_calendar": "old_id"},
+        )
+        mock_get_calendar_map.return_value = {"new_calendar": "new_id"}
+
+        result = services.refresh_calendars(test_config)
+
+        assert result is True
+        assert "new_calendar" in services.calendars
+        assert "primary" in services.calendars  # Always added
+        assert "old_calendar" not in services.calendars  # Should be removed

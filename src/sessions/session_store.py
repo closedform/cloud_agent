@@ -1,13 +1,12 @@
 """File-based session store for conversation persistence."""
 
 import json
-import os
-import tempfile
 import threading
 from pathlib import Path
 from typing import Any, Literal
 
 from src.sessions.email_session import EmailConversation, compute_thread_id
+from src.utils import atomic_write_json
 
 
 class FileSessionStore:
@@ -31,26 +30,22 @@ class FileSessionStore:
             return {}
         try:
             with open(self.file_path, "r") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError):
+                data = json.load(f)
+            # Validate structure
+            if not isinstance(data, dict):
+                print(f"Warning: Sessions file has invalid structure (expected dict), returning empty")
+                return {}
+            return data
+        except json.JSONDecodeError as e:
+            print(f"Warning: Sessions file has invalid JSON: {e}")
+            return {}
+        except OSError as e:
+            print(f"Warning: Cannot read sessions file: {e}")
             return {}
 
     def _save(self, data: dict[str, dict[str, Any]]) -> None:
-        """Save sessions atomically using temp file + rename."""
-        dir_path = self.file_path.parent
-        dir_path.mkdir(parents=True, exist_ok=True)
-
-        fd, tmp_path = tempfile.mkstemp(suffix=".tmp", dir=dir_path)
-        try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(data, f, indent=2)
-            os.rename(tmp_path, self.file_path)
-        except Exception:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+        """Save sessions atomically."""
+        atomic_write_json(data, self.file_path)
 
     def get(self, thread_id: str) -> EmailConversation | None:
         """Get a conversation by thread ID.
@@ -61,15 +56,20 @@ class FileSessionStore:
         Returns:
             EmailConversation if found, None otherwise.
         """
-        data = self._load()
-        if thread_id in data:
-            return EmailConversation.from_dict(data[thread_id])
-        return None
+        with self._lock:
+            data = self._load()
+            if thread_id in data:
+                return EmailConversation.from_dict(data[thread_id])
+            return None
 
     def get_or_create(
         self, sender: str, subject: str
     ) -> tuple[EmailConversation, bool]:
         """Get existing conversation or create a new one.
+
+        This method is atomic - the entire get-or-create cycle is protected
+        by a lock to prevent race conditions when multiple tasks for the
+        same thread arrive nearly simultaneously.
 
         Args:
             sender: Sender email address.
@@ -79,15 +79,19 @@ class FileSessionStore:
             Tuple of (conversation, is_new) where is_new is True if newly created.
         """
         thread_id = compute_thread_id(subject, sender)
-        conversation = self.get(thread_id)
 
-        if conversation is not None:
-            return conversation, False
+        # Use lock to make entire get-or-create atomic
+        with self._lock:
+            data = self._load()
 
-        # Create new conversation
-        conversation = EmailConversation.create(sender, subject)
-        self.save(conversation)
-        return conversation, True
+            if thread_id in data:
+                return EmailConversation.from_dict(data[thread_id]), False
+
+            # Create new conversation
+            conversation = EmailConversation.create(sender, subject)
+            data[thread_id] = conversation.to_dict()
+            self._save(data)
+            return conversation, True
 
     def save(self, conversation: EmailConversation) -> None:
         """Save a conversation.
@@ -105,7 +109,7 @@ class FileSessionStore:
         thread_id: str,
         role: Literal["user", "assistant"],
         content: str,
-    ) -> None:
+    ) -> bool:
         """Add a message to a conversation.
 
         Args:
@@ -113,18 +117,24 @@ class FileSessionStore:
             role: Message role ('user' or 'assistant').
             content: Message content.
 
-        Raises:
-            KeyError: If thread_id not found.
+        Returns:
+            True if message was added, False if conversation not found.
         """
         with self._lock:
             data = self._load()
             if thread_id not in data:
-                raise KeyError(f"Conversation {thread_id} not found")
+                print(f"Warning: Conversation {thread_id} not found, cannot add message")
+                return False
 
-            conversation = EmailConversation.from_dict(data[thread_id])
-            conversation.add_message(role, content)
-            data[thread_id] = conversation.to_dict()
-            self._save(data)
+            try:
+                conversation = EmailConversation.from_dict(data[thread_id])
+                conversation.add_message(role, content)
+                data[thread_id] = conversation.to_dict()
+                self._save(data)
+                return True
+            except (KeyError, TypeError) as e:
+                print(f"Warning: Failed to add message to {thread_id}: {e}")
+                return False
 
     def list_conversations(
         self, sender: str | None = None, limit: int = 50
@@ -138,8 +148,9 @@ class FileSessionStore:
         Returns:
             List of conversations, most recently updated first.
         """
-        data = self._load()
-        conversations = [EmailConversation.from_dict(c) for c in data.values()]
+        with self._lock:
+            data = self._load()
+            conversations = [EmailConversation.from_dict(c) for c in data.values()]
 
         # Filter by sender if specified
         if sender:

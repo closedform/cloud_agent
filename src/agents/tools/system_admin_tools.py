@@ -17,10 +17,17 @@ from src.config import get_config
 
 
 def _is_admin() -> bool:
-    """Check if current user is in admin_emails list."""
+    """Check if current user is in admin_emails list.
+
+    Email comparison is case-insensitive per RFC 5321.
+    """
     config = get_config()
     user_email = get_user_email()
-    return user_email in config.admin_emails
+    if not user_email:
+        return False
+    # Case-insensitive email comparison per RFC 5321
+    user_email_lower = user_email.lower()
+    return any(admin.lower() == user_email_lower for admin in config.admin_emails)
 
 
 def _require_admin() -> dict[str, Any] | None:
@@ -123,6 +130,9 @@ def list_crontabs() -> dict[str, Any]:
     }
 
 
+_MAX_COMMENT_LENGTH = 200  # Maximum length for crontab comments
+
+
 def add_crontab_entry(
     schedule: str,
     command: str,
@@ -133,7 +143,7 @@ def add_crontab_entry(
     Args:
         schedule: Cron schedule expression (e.g., "0 8 * * *" for daily at 8am).
         command: Command to run.
-        comment: Optional comment to add above the entry.
+        comment: Optional comment to add above the entry (max 200 chars, no newlines).
 
     Returns:
         Dictionary with status.
@@ -155,6 +165,19 @@ def add_crontab_entry(
             "status": "error",
             "message": "Command not allowed. Only agent-related commands are permitted.",
         }
+
+    # Validate comment: no newlines or shell metacharacters, length limit
+    if comment:
+        if "\n" in comment or "\r" in comment:
+            return {
+                "status": "error",
+                "message": "Comment cannot contain newlines.",
+            }
+        if len(comment) > _MAX_COMMENT_LENGTH:
+            return {
+                "status": "error",
+                "message": f"Comment too long (max {_MAX_COMMENT_LENGTH} characters).",
+            }
 
     # Get current crontab
     code, stdout, stderr = _run_command(["crontab", "-l"])
@@ -200,11 +223,14 @@ def add_crontab_entry(
         return {"status": "error", "message": str(e)}
 
 
+_MIN_PATTERN_LENGTH = 3  # Minimum pattern length to prevent overly broad matches
+
+
 def remove_crontab_entry(pattern: str) -> dict[str, Any]:
     """Remove crontab entries matching a pattern. Requires admin privileges.
 
     Args:
-        pattern: Text pattern to match (case-insensitive substring match).
+        pattern: Text pattern to match (case-insensitive substring match, min 3 chars).
 
     Returns:
         Dictionary with status and removed entries.
@@ -212,9 +238,16 @@ def remove_crontab_entry(pattern: str) -> dict[str, Any]:
     if error := _require_admin():
         return error
 
-    # Validate pattern is not empty (empty pattern would match everything!)
+    # Validate pattern is not empty or too short (prevents accidental mass deletion)
     if not pattern or not pattern.strip():
         return {"status": "error", "message": "Pattern cannot be empty"}
+
+    pattern_stripped = pattern.strip()
+    if len(pattern_stripped) < _MIN_PATTERN_LENGTH:
+        return {
+            "status": "error",
+            "message": f"Pattern must be at least {_MIN_PATTERN_LENGTH} characters to prevent accidental mass deletion.",
+        }
 
     # Get current crontab
     code, stdout, stderr = _run_command(["crontab", "-l"])
@@ -236,7 +269,7 @@ def remove_crontab_entry(pattern: str) -> dict[str, Any]:
 
     if not removed:
         return {
-            "status": "not_found",
+            "status": "error",
             "message": f"No entries matching '{pattern}' found",
             "removed": [],
         }
@@ -423,11 +456,16 @@ def git_pull() -> dict[str, Any]:
     }
 
 
+# Allowlist of safe pytest flags
+_SAFE_PYTEST_FLAGS = {"-k", "-x", "--maxfail", "-m", "--collect-only", "--co"}
+
+
 def run_tests(test_pattern: str | None = None) -> dict[str, Any]:
     """Run project tests. Requires admin privileges.
 
     Args:
-        test_pattern: Optional pytest pattern (e.g., "test_diary" or "-k 'test_add'").
+        test_pattern: Optional test file/module name (e.g., "test_diary") or
+                      safe pytest flags (-k, -x, -m, --maxfail, --collect-only).
 
     Returns:
         Dictionary with test results.
@@ -440,9 +478,38 @@ def run_tests(test_pattern: str | None = None) -> dict[str, Any]:
 
     cmd = ["uv", "run", "pytest", "-v"]
     if test_pattern:
+        # SECURITY: Validate ENTIRE pattern for shell metacharacters BEFORE splitting.
+        # This prevents injection via flag values like: -k "test; rm -rf /"
+        for char in _SHELL_METACHARACTERS:
+            if char in test_pattern:
+                return {
+                    "status": "error",
+                    "message": "Test pattern contains invalid characters.",
+                }
+
+        # If pattern starts with "-", validate it's a safe flag
         if test_pattern.startswith("-"):
-            cmd.extend(test_pattern.split())
+            parts = test_pattern.split()
+            # Validate each flag is in the safe list
+            for part in parts:
+                if part.startswith("-") and not part.startswith("--"):
+                    # Short flag like -k, -x, -m
+                    flag = part[:2]  # Just the flag part
+                elif part.startswith("--"):
+                    # Long flag like --maxfail, --collect-only
+                    flag = part.split("=")[0]  # Handle --maxfail=3 format
+                else:
+                    # Value for previous flag, skip validation
+                    continue
+
+                if flag not in _SAFE_PYTEST_FLAGS:
+                    return {
+                        "status": "error",
+                        "message": f"Pytest flag '{flag}' not allowed. Safe flags: {', '.join(sorted(_SAFE_PYTEST_FLAGS))}",
+                    }
+            cmd.extend(parts)
         else:
+            # Plain test pattern (file/module name) - already validated above
             cmd.append(test_pattern)
 
     code, stdout, stderr = _run_command(cmd, timeout=300, cwd=project_root)
@@ -452,7 +519,7 @@ def run_tests(test_pattern: str | None = None) -> dict[str, Any]:
     failed = stdout.count(" FAILED")
 
     return {
-        "status": "success" if code == 0 else "failed",
+        "status": "success" if code == 0 else "error",
         "passed": passed,
         "failed": failed,
         "output": stdout[-5000:] if len(stdout) > 5000 else stdout,  # Limit output
@@ -501,7 +568,7 @@ def restart_services() -> dict[str, Any]:
         return error
 
     return {
-        "status": "info",
+        "status": "success",
         "message": "To restart the agent services, run the following commands on the VM:",
         "commands": [
             "tmux kill-session -t agent",

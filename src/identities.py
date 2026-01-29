@@ -5,6 +5,8 @@ Maps email addresses to user identities with names for personalization.
 
 from dataclasses import dataclass
 
+from src.utils import normalize_email
+
 
 @dataclass(frozen=True)
 class Identity:
@@ -15,6 +17,7 @@ class Identity:
     short_name: str
 
 
+# Registry of known identities, keyed by normalized (lowercase) email
 IDENTITIES: dict[str, Identity] = {
     "dinunnob@gmail.com": Identity(
         email="dinunnob@gmail.com",
@@ -30,5 +33,13 @@ IDENTITIES: dict[str, Identity] = {
 
 
 def get_identity(email: str) -> Identity | None:
-    """Get identity for an email address, or None if unknown."""
-    return IDENTITIES.get(email)
+    """Get identity for an email address, or None if unknown.
+
+    Args:
+        email: Email address to look up. Case-insensitive matching is used.
+
+    Returns:
+        Identity object if found, None if the email is not in the registry.
+    """
+    normalized = normalize_email(email)
+    return IDENTITIES.get(normalized)

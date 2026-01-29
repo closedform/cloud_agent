@@ -74,9 +74,9 @@ def create_agent_task(
                 "message": f"Empty or invalid values for: {', '.join(empty_fields)}",
             }
 
-        # Validate recipient is in allowed list
-        allowed_recipients = config.allowed_senders  # Reuse allowed_senders as whitelist
-        if to_address not in allowed_recipients:
+        # Validate recipient is in allowed list (case-insensitive per RFC 5321)
+        allowed_recipients_lower = {s.lower() for s in config.allowed_senders}
+        if to_address.lower() not in allowed_recipients_lower:
             return {
                 "status": "error",
                 "message": f"Recipient {to_address} not in allowed list. Cannot send to arbitrary addresses.",
@@ -90,6 +90,16 @@ def create_agent_task(
         return {
             "status": "error",
             "message": "No user context available. Cannot create task.",
+        }
+
+    # Security: Validate original_sender is in allowed_senders
+    # This provides defense-in-depth - even if context is somehow spoofed,
+    # the task won't be created for non-whitelisted senders
+    allowed_senders_lower = {s.lower() for s in config.allowed_senders}
+    if original_sender.lower() not in allowed_senders_lower:
+        return {
+            "status": "error",
+            "message": "User not authorized to create agent tasks.",
         }
 
     # Create the agent task

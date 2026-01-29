@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from src.user_data import (
+    _validate_email,
     add_to_list,
     add_todo,
     complete_todo,
@@ -20,6 +21,7 @@ from src.user_data import (
     remove_from_list,
     save_user_data,
 )
+from src.utils import normalize_email
 
 
 class TestLoadUserData:
@@ -309,3 +311,133 @@ class TestTodoOperations:
         """Should return False if todo not found."""
         result = delete_todo("user@example.com", "nonexistent", test_config)
         assert result is False
+
+
+class TestEmailNormalization:
+    """Tests for email normalization and validation."""
+
+    def test_normalize_email_lowercase(self):
+        """Should lowercase email addresses."""
+        assert normalize_email("User@Example.COM") == "user@example.com"
+
+    def test_normalize_email_strips_whitespace(self):
+        """Should strip leading/trailing whitespace."""
+        assert normalize_email("  user@example.com  ") == "user@example.com"
+
+    def test_validate_email_valid_addresses(self):
+        """Should accept valid email formats."""
+        assert _validate_email("user@example.com") is True
+        assert _validate_email("user.name@example.co.uk") is True
+        assert _validate_email("user+tag@example.com") is True
+
+    def test_validate_email_invalid_addresses(self):
+        """Should reject invalid email formats."""
+        assert _validate_email("invalid") is False
+        assert _validate_email("@example.com") is False
+        assert _validate_email("user@") is False
+        assert _validate_email("user @example.com") is False
+        assert _validate_email("") is False
+
+
+class TestEmailCaseInsensitivity:
+    """Tests for case-insensitive email handling."""
+
+    def test_add_to_list_normalizes_email(self, test_config):
+        """Should normalize email when adding to list."""
+        add_to_list("USER@EXAMPLE.COM", "movies", "Inception", test_config)
+        # Should find with lowercase lookup
+        items = get_list("user@example.com", "movies", test_config)
+        assert items == ["Inception"]
+
+    def test_add_todo_normalizes_email(self, test_config):
+        """Should normalize email when adding todo."""
+        add_todo("USER@EXAMPLE.COM", "Test task", test_config)
+        # Should find with lowercase lookup
+        todos = get_todos("user@example.com", test_config)
+        assert len(todos) == 1
+        assert todos[0]["text"] == "Test task"
+
+    def test_complete_todo_normalizes_email(self, test_config):
+        """Should normalize email when completing todo."""
+        todo = add_todo("user@example.com", "Task to complete", test_config)
+        # Complete with uppercase email
+        result = complete_todo("USER@EXAMPLE.COM", todo["id"], test_config)
+        assert result is True
+
+    def test_delete_todo_normalizes_email(self, test_config):
+        """Should normalize email when deleting todo."""
+        todo = add_todo("user@example.com", "Task to delete", test_config)
+        # Delete with uppercase email
+        result = delete_todo("USER@EXAMPLE.COM", todo["id"], test_config)
+        assert result is True
+
+
+class TestDataValidation:
+    """Tests for input validation."""
+
+    def test_add_to_list_invalid_email_raises(self, test_config):
+        """Should raise ValueError for invalid email format."""
+        with pytest.raises(ValueError, match="Invalid email format"):
+            add_to_list("invalid-email", "movies", "Inception", test_config)
+
+    def test_add_todo_invalid_email_raises(self, test_config):
+        """Should raise ValueError for invalid email format."""
+        with pytest.raises(ValueError, match="Invalid email format"):
+            add_todo("invalid-email", "Test task", test_config)
+
+    def test_add_todo_invalid_due_date_raises(self, test_config):
+        """Should raise ValueError for invalid due date format."""
+        with pytest.raises(ValueError, match="Invalid due_date format"):
+            add_todo(
+                "user@example.com",
+                "Test task",
+                test_config,
+                due_date="2026/02/15",  # Wrong format
+            )
+
+    def test_add_todo_invalid_due_date_value_raises(self, test_config):
+        """Should raise ValueError for invalid due date value."""
+        with pytest.raises(ValueError, match="Invalid due_date format"):
+            add_todo(
+                "user@example.com",
+                "Test task",
+                test_config,
+                due_date="2026-13-45",  # Invalid month/day
+            )
+
+    def test_add_todo_valid_due_date_accepted(self, test_config):
+        """Should accept valid due date format."""
+        todo = add_todo(
+            "user@example.com",
+            "Test task",
+            test_config,
+            due_date="2026-02-15",
+        )
+        assert todo["due_date"] == "2026-02-15"
+
+
+class TestUnicodeSupport:
+    """Tests for Unicode character support."""
+
+    def test_save_and_load_unicode_data(self, test_config):
+        """Should correctly save and load Unicode characters."""
+        data = {
+            "user@example.com": {
+                "lists": {"peliculas": ["El laberinto del fauno", "Amelie"]},
+                "todos": [{"id": "1", "text": "Llamar a mama", "done": False}],
+            }
+        }
+        save_user_data(data, test_config)
+        loaded = load_user_data(test_config)
+        assert loaded == data
+
+    def test_add_unicode_items(self, test_config):
+        """Should handle Unicode in list items."""
+        add_to_list("user@example.com", "movies", "Amelie", test_config)
+        items = get_list("user@example.com", "movies", test_config)
+        assert "Amelie" in items
+
+    def test_add_unicode_todo(self, test_config):
+        """Should handle Unicode in todo text."""
+        todo = add_todo("user@example.com", "Buy cafe con leche", test_config)
+        assert todo["text"] == "Buy cafe con leche"

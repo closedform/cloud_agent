@@ -12,6 +12,10 @@ from src.config import get_config
 from src.diary import get_user_diary_entries
 from src.weather import get_weekly_forecast, MANHATTAN_LAT, MANHATTAN_LON
 
+# Validation constants
+MAX_SEARCH_QUERY_LENGTH = 10000  # Prevent excessively long queries
+MAX_DIARY_WEEKS = 52  # Maximum weeks to query (1 year)
+
 
 def web_search(query: str) -> dict[str, Any]:
     """Perform a web search using Google Search grounding.
@@ -22,6 +26,17 @@ def web_search(query: str) -> dict[str, Any]:
     Returns:
         Dictionary with search results.
     """
+    # Validate query
+    if not query or not query.strip():
+        return {"status": "error", "message": "Search query cannot be empty"}
+
+    query = query.strip()
+    if len(query) > MAX_SEARCH_QUERY_LENGTH:
+        return {
+            "status": "error",
+            "message": f"Query too long (max {MAX_SEARCH_QUERY_LENGTH} characters)",
+        }
+
     services = get_services()
     if not services or not services.gemini_client:
         return {"status": "error", "message": "Services not available"}
@@ -42,10 +57,17 @@ Provide a comprehensive, well-structured response with key facts and insights.""
             config=GenerateContentConfig(tools=[Tool(google_search=GoogleSearch())]),
         )
 
+        result_text = response.text if hasattr(response, "text") else None
+        if result_text is None:
+            return {
+                "status": "error",
+                "message": "Search returned no results",
+            }
+
         return {
             "status": "success",
             "query": query,
-            "result": response.text,
+            "result": result_text,
         }
 
     except Exception as e:
@@ -60,7 +82,7 @@ def query_diary(
 
     Args:
         query: Optional search query to filter entries.
-        weeks: Number of recent weeks to search (default: 4).
+        weeks: Number of recent weeks to search (default: 4, max: 52).
 
     Returns:
         Dictionary with matching diary entries.
@@ -68,6 +90,12 @@ def query_diary(
     email = get_user_email()
     if not email:
         return {"status": "error", "message": "User email not available"}
+
+    # Validate weeks parameter
+    if weeks < 1:
+        weeks = 1
+    elif weeks > MAX_DIARY_WEEKS:
+        weeks = MAX_DIARY_WEEKS
 
     config = get_config()
     entries = get_user_diary_entries(email, config, limit=weeks)
@@ -128,16 +156,17 @@ def get_weather_forecast(location: str = "manhattan") -> dict[str, Any]:
     forecast = get_weekly_forecast(lat, lon)
 
     if forecast.get("status") == "success":
-        # Format for display
+        # Format for display with safe key access
         days = []
         for day in forecast.get("forecasts", []):
+            precip = day.get("precipitation_chance")
             days.append({
-                "date": day["date"],
-                "day": day["day"],
-                "high_f": day["high"],
-                "low_f": day["low"],
-                "condition": day["condition"],
-                "rain_chance": f"{day['precipitation_chance']}%" if day.get("precipitation_chance") else "0%",
+                "date": day.get("date"),
+                "day": day.get("day"),
+                "high_f": day.get("high"),
+                "low_f": day.get("low"),
+                "condition": day.get("condition", "Unknown"),
+                "rain_chance": f"{precip}%" if precip else "0%",
             })
 
         return {

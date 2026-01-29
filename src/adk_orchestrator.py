@@ -5,6 +5,8 @@ Replaces the handler-based orchestrator with Google ADK agents.
 
 import asyncio
 import shutil
+import signal
+import sys
 import threading
 import time
 from datetime import datetime
@@ -48,6 +50,9 @@ class ADKOrchestrator:
         self.services = services
         self.session_store = FileSessionStore(config.sessions_file)
 
+        # Shutdown flag for graceful termination
+        self._shutdown_event = threading.Event()
+
         # Set global services for tools
         set_services(services)
 
@@ -58,6 +63,9 @@ class ADKOrchestrator:
             app_name="cloud_agent",
             session_service=self.session_service,
         )
+
+        # Create a persistent event loop for async operations
+        self._loop = asyncio.new_event_loop()
 
     def _execute_agent_task(self, agent_task: AgentTask) -> str:
         """Execute an agent-created task directly.
@@ -98,7 +106,9 @@ class ADKOrchestrator:
             return "failed"
 
         # Defense in depth: validate recipient even though tool already checked
-        if to_address not in self.config.allowed_senders:
+        # Use case-insensitive comparison for email addresses
+        allowed_senders_lower = {s.lower() for s in self.config.allowed_senders}
+        if to_address.lower() not in allowed_senders_lower:
             print(f"  Security: Blocked email to non-whitelisted recipient: {to_address}")
             return "failed"
 
@@ -195,7 +205,12 @@ class ADKOrchestrator:
                     return "failed"
 
             # Regular email-originated task
-            task = Task.from_dict(task_data)
+            try:
+                task = Task.from_dict(task_data)
+            except (ValueError, KeyError, TypeError) as e:
+                # Invalid task data should fail immediately, not retry infinitely
+                print(f"  Invalid task data: {e}")
+                return "failed"
 
             # Get or create conversation for multi-turn support
             conversation, is_new = self.session_store.get_or_create(
@@ -225,7 +240,7 @@ class ADKOrchestrator:
             # Use thread_id as session_id for ADK
             session_id = conversation.thread_id
 
-            # Ensure ADK session exists (async methods need asyncio.run)
+            # Ensure ADK session exists (use persistent event loop)
             async def ensure_session():
                 session = await self.session_service.get_session(
                     app_name="cloud_agent",
@@ -239,7 +254,7 @@ class ADKOrchestrator:
                         session_id=session_id,
                     )
 
-            asyncio.run(ensure_session())
+            self._loop.run_until_complete(ensure_session())
 
             print(f"  Thread: {conversation.thread_id} ({'new' if is_new else 'continuing'})")
 
@@ -351,23 +366,60 @@ class ADKOrchestrator:
             clear_request_context()
 
     def move_task(self, task_file: Path, dest_dir: Path) -> None:
-        """Move task file and attachments to destination folder."""
+        """Move task file and attachments to destination folder.
+
+        Moves the task file first, then attachments. If task file move fails,
+        nothing is moved. If attachment move fails, the task file is already
+        moved (which is acceptable - we don't want to reprocess the task).
+        """
         try:
             dest_dir.mkdir(exist_ok=True)
 
+            # Read task data before moving the file
             task_data = read_task_safe(task_file)
+
+            # Move task file first (if this fails, we retry the task)
+            shutil.move(str(task_file), str(dest_dir / task_file.name))
+
+            # Move attachments (best effort - task won't be reprocessed even if this fails)
             if task_data:
-                # Move attachments
                 for attachment in task_data.get("attachments", []):
                     src = self.config.input_dir / attachment
                     if src.exists():
-                        shutil.move(str(src), str(dest_dir / attachment))
-
-            # Move task file
-            shutil.move(str(task_file), str(dest_dir / task_file.name))
+                        try:
+                            shutil.move(str(src), str(dest_dir / attachment))
+                        except Exception as e:
+                            print(f"  Warning: Could not move attachment {attachment}: {e}")
 
         except Exception as e:
             print(f"  Move error: {e}")
+
+    def shutdown(self) -> None:
+        """Signal the orchestrator to shut down gracefully."""
+        print("\nShutdown requested...")
+        self._shutdown_event.set()
+
+    def cleanup(self) -> None:
+        """Clean up resources on shutdown."""
+        print("Cleaning up...")
+
+        # Cancel all active reminder timers
+        try:
+            from src.reminders import cancel_all_reminders
+            cancelled = cancel_all_reminders()
+            if cancelled > 0:
+                print(f"  Cancelled {cancelled} reminder timer(s)")
+        except Exception as e:
+            print(f"  Warning: Error cancelling reminders: {e}")
+
+        # Close the persistent event loop
+        try:
+            if self._loop and not self._loop.is_closed():
+                self._loop.close()
+        except Exception as e:
+            print(f"  Warning: Error closing event loop: {e}")
+
+        print("Cleanup complete.")
 
     def run(self) -> None:
         """Main orchestrator loop."""
@@ -383,7 +435,7 @@ class ADKOrchestrator:
         # Start scheduler in background
         scheduler_thread = threading.Thread(
             target=run_scheduler,
-            args=(self.config, self.services),
+            args=(self.config, self.services, self._shutdown_event),
             daemon=True,
         )
         scheduler_thread.start()
@@ -391,28 +443,43 @@ class ADKOrchestrator:
         # Track retry counts
         task_retries: dict[str, int] = {}
 
-        while True:
-            # Find task files
-            task_files = sorted(self.config.input_dir.glob("task_*.json"))
+        try:
+            while not self._shutdown_event.is_set():
+                # Find task files
+                task_files = sorted(self.config.input_dir.glob("task_*.json"))
 
-            for task_file in task_files:
-                task_key = task_file.name
-                result = self.process_task(task_file)
+                # Clean up orphaned retry entries (task files manually deleted)
+                current_task_names = {f.name for f in task_files}
+                orphaned_keys = [k for k in task_retries if k not in current_task_names]
+                for key in orphaned_keys:
+                    task_retries.pop(key, None)
 
-                if result == "processed":
-                    self.move_task(task_file, self.config.processed_dir)
-                    task_retries.pop(task_key, None)
-                elif result == "retry":
-                    task_retries[task_key] = task_retries.get(task_key, 0) + 1
-                    if task_retries[task_key] >= self.config.max_task_retries:
-                        print(f"  Failed {task_key}: max retries exceeded")
+                for task_file in task_files:
+                    # Check for shutdown between tasks
+                    if self._shutdown_event.is_set():
+                        break
+
+                    task_key = task_file.name
+                    result = self.process_task(task_file)
+
+                    if result == "processed":
+                        self.move_task(task_file, self.config.processed_dir)
+                        task_retries.pop(task_key, None)
+                    elif result == "retry":
+                        task_retries[task_key] = task_retries.get(task_key, 0) + 1
+                        if task_retries[task_key] >= self.config.max_task_retries:
+                            print(f"  Failed {task_key}: max retries exceeded")
+                            self.move_task(task_file, self.config.failed_dir)
+                            task_retries.pop(task_key, None)
+                    elif result == "failed":
                         self.move_task(task_file, self.config.failed_dir)
                         task_retries.pop(task_key, None)
-                elif result == "failed":
-                    self.move_task(task_file, self.config.failed_dir)
-                    task_retries.pop(task_key, None)
 
-            time.sleep(5)
+                # Use event wait instead of sleep for responsive shutdown
+                self._shutdown_event.wait(timeout=5)
+
+        finally:
+            self.cleanup()
 
 
 def main() -> None:
@@ -421,7 +488,22 @@ def main() -> None:
     services = create_services(config)
 
     orchestrator = ADKOrchestrator(config, services)
-    orchestrator.run()
+
+    # Set up signal handlers for graceful shutdown
+    def signal_handler(signum: int, frame) -> None:
+        orchestrator.shutdown()
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    try:
+        orchestrator.run()
+    except KeyboardInterrupt:
+        # Handle Ctrl+C if signal handler didn't catch it
+        orchestrator.shutdown()
+
+    print("ADK Orchestrator stopped.")
+    sys.exit(0)
 
 
 if __name__ == "__main__":

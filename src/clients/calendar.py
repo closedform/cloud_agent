@@ -78,7 +78,7 @@ def add_event(
     calendar_id: str = "primary",
     recurrence: str | None = None,
     timezone: str = "America/New_York",
-) -> None:
+) -> dict[str, Any]:
     """Add an event to the specified calendar.
 
     Args:
@@ -90,6 +90,12 @@ def add_event(
         calendar_id: Calendar ID (default: primary).
         recurrence: RRULE string for recurring events.
         timezone: Timezone for the event.
+
+    Returns:
+        The created event resource from Google Calendar API.
+
+    Raises:
+        HttpError: If the API call fails.
     """
     event = {
         "summary": summary,
@@ -111,8 +117,10 @@ def add_event(
         event_result = service.events().insert(calendarId=calendar_id, body=event).execute()
         print(f"SUCCESS: Created event '{summary}' on calendar '{calendar_id}'")
         print(f"Link: {event_result.get('htmlLink')}")
+        return event_result
     except HttpError as error:
         print(f"FAILED to create event '{summary}': {error}")
+        raise  # Re-raise so callers can handle the error
 
 
 def get_calendar_map(service: Any) -> dict[str, str]:
@@ -123,20 +131,23 @@ def get_calendar_map(service: Any) -> dict[str, str]:
 
     Returns:
         Dictionary mapping lowercase calendar names to calendar IDs.
+
+    Raises:
+        HttpError: If the API call fails (allows caller to handle appropriately).
     """
     calendar_map = {}
-    try:
-        page_token = None
-        while True:
-            calendar_list = service.calendarList().list(pageToken=page_token).execute()
-            for entry in calendar_list["items"]:
-                key = entry["summary"].lower()
+    page_token = None
+    while True:
+        calendar_list = service.calendarList().list(pageToken=page_token).execute()
+        for entry in calendar_list.get("items", []):
+            # Safely access summary with fallback for calendars without names
+            summary = entry.get("summary", "")
+            if summary:
+                key = summary.lower()
                 calendar_map[key] = entry["id"]
-            page_token = calendar_list.get("nextPageToken")
-            if not page_token:
-                break
-    except HttpError as error:
-        print(f"Error fetching calendars: {error}")
+        page_token = calendar_list.get("nextPageToken")
+        if not page_token:
+            break
     return calendar_map
 
 

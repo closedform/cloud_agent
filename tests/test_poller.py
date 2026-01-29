@@ -423,18 +423,32 @@ class TestConnectImap:
     """Tests for connect_imap function."""
 
     def test_connects_and_logs_in(self, test_config):
-        """Should connect to IMAP server and login."""
+        """Should connect to IMAP server and login with timeout."""
         with patch("src.poller.imaplib.IMAP4_SSL") as mock_imap:
             mock_mail = MagicMock()
             mock_imap.return_value = mock_mail
 
             result = connect_imap(test_config)
 
-            mock_imap.assert_called_once_with(test_config.imap_server)
+            # Should use per-connection timeout parameter (not global socket timeout)
+            mock_imap.assert_called_once_with(test_config.imap_server, timeout=30)
             mock_mail.login.assert_called_once_with(
                 test_config.email_user, test_config.email_pass
             )
             assert result == mock_mail
+
+    def test_cleans_up_on_login_failure(self, test_config):
+        """Should logout and clean up when login fails."""
+        with patch("src.poller.imaplib.IMAP4_SSL") as mock_imap:
+            mock_mail = MagicMock()
+            mock_mail.login.side_effect = Exception("Auth failed")
+            mock_imap.return_value = mock_mail
+
+            with pytest.raises(Exception, match="Auth failed"):
+                connect_imap(test_config)
+
+            # Should attempt logout on failure
+            mock_mail.logout.assert_called_once()
 
 
 class TestProcessEmails:

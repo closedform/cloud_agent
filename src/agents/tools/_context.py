@@ -2,6 +2,13 @@
 
 Tools need access to config and services, but ADK tool functions can't receive
 custom parameters. This module provides thread-safe global access to these resources.
+
+Design Notes:
+- Services: Global singleton set once during orchestrator initialization.
+- Request Context: Uses a shared dict (NOT threading.local) because ADK runs
+  sub-agents in separate threads that need access to the same context values.
+  Since tasks are processed sequentially by the orchestrator, this is safe.
+  The scheduler thread does NOT use request context - it operates independently.
 """
 
 import threading
@@ -38,9 +45,10 @@ def get_services() -> "Services | None":
 
 
 # Current request context (set per-request)
-# Note: Using a regular dict instead of threading.local() because ADK runs
-# sub-agents in separate threads that need access to the same context.
-# Since tasks are processed sequentially, this is safe.
+# IMPORTANT: This is a shared dict, NOT thread-local. This is intentional because:
+# 1. ADK runs sub-agents in separate threads that need access to the same context
+# 2. Tasks are processed sequentially, so only one context is active at a time
+# 3. The scheduler thread operates independently and doesn't use this context
 _request_context: dict[str, str] = {}
 _context_lock = threading.Lock()
 

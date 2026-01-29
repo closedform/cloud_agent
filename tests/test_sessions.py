@@ -57,6 +57,32 @@ class TestComputeThreadId:
         id2 = compute_thread_id("[External] Test subject", "user@example.com")
         assert id1 == id2
 
+    def test_strips_multiple_bracketed_prefixes(self):
+        """Should strip multiple bracketed prefixes like [External] [SPAM]."""
+        id1 = compute_thread_id("Test subject", "user@example.com")
+        id2 = compute_thread_id("[External] [SPAM] Test subject", "user@example.com")
+        id3 = compute_thread_id("[External] [Urgent] [SPAM] Test subject", "user@example.com")
+        assert id1 == id2
+        assert id1 == id3
+
+    def test_strips_mixed_prefixes(self):
+        """Should strip Re:, Fwd:, and bracketed prefixes in any order."""
+        id1 = compute_thread_id("Test subject", "user@example.com")
+        id2 = compute_thread_id("Re: [External] Test subject", "user@example.com")
+        id3 = compute_thread_id("[External] Re: [SPAM] Fwd: Test subject", "user@example.com")
+        assert id1 == id2
+        assert id1 == id3
+
+    def test_empty_subject_after_normalization(self):
+        """Should handle subjects that become empty after normalization."""
+        # Even with empty normalized subjects, different senders get different thread IDs
+        id1 = compute_thread_id("Re: Re: Re:", "user1@example.com")
+        id2 = compute_thread_id("Re: Re: Re:", "user2@example.com")
+        assert id1 != id2
+        # Same sender with same empty normalized subject should match
+        id3 = compute_thread_id("Re:", "user1@example.com")
+        assert id1 == id3
+
 
 class TestMessage:
     """Tests for Message dataclass."""
@@ -185,16 +211,19 @@ class TestFileSessionStore:
     def test_add_message(self, store):
         """Should add message to existing conversation."""
         conv, _ = store.get_or_create("user@example.com", "Test")
-        store.add_message(conv.thread_id, "user", "Hello")
-        store.add_message(conv.thread_id, "assistant", "Hi")
+        result1 = store.add_message(conv.thread_id, "user", "Hello")
+        result2 = store.add_message(conv.thread_id, "assistant", "Hi")
+
+        assert result1 is True
+        assert result2 is True
 
         retrieved = store.get(conv.thread_id)
         assert len(retrieved.messages) == 2
 
-    def test_add_message_raises_for_missing(self, store):
-        """Should raise KeyError for non-existent thread."""
-        with pytest.raises(KeyError):
-            store.add_message("nonexistent", "user", "Hello")
+    def test_add_message_returns_false_for_missing(self, store):
+        """Should return False for non-existent thread."""
+        result = store.add_message("nonexistent", "user", "Hello")
+        assert result is False
 
     def test_list_conversations(self, store):
         """Should list all conversations."""

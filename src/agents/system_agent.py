@@ -39,7 +39,17 @@ def get_system_status() -> dict[str, Any]:
         try:
             with open(config.reminders_file, "r") as f:
                 reminders = json.load(f)
-            status["pending_reminders"] = len(reminders)
+            # Ensure reminders is a list or dict before counting
+            if isinstance(reminders, list):
+                status["pending_reminders"] = len(reminders)
+            elif isinstance(reminders, dict):
+                status["pending_reminders"] = len(reminders)
+            else:
+                status["pending_reminders"] = "unknown (invalid format)"
+        except json.JSONDecodeError:
+            status["pending_reminders"] = "unknown (corrupted file)"
+        except PermissionError:
+            status["pending_reminders"] = "unknown (permission denied)"
         except Exception:
             status["pending_reminders"] = "unknown"
 

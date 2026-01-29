@@ -40,10 +40,17 @@ class TestGetIdentity:
         identity = get_identity("unknown@example.com")
         assert identity is None
 
-    def test_case_sensitive_lookup(self):
-        """Email lookup should be case-sensitive."""
+    def test_case_insensitive_lookup(self):
+        """Email lookup should be case-insensitive."""
         identity = get_identity("DINUNNOB@GMAIL.COM")
-        assert identity is None
+        assert identity is not None
+        assert identity.short_name == "Brandon"
+
+    def test_whitespace_trimmed_lookup(self):
+        """Email lookup should trim whitespace."""
+        identity = get_identity("  dinunnob@gmail.com  ")
+        assert identity is not None
+        assert identity.short_name == "Brandon"
 
 
 class TestIdentitiesRegistry:

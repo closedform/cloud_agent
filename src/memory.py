@@ -5,8 +5,6 @@ Examples: "Has cat named Oliver", "Uses Manhattan Vet on 5th Ave", "Prefers morn
 """
 
 import json
-import os
-import tempfile
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -14,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from src.config import get_config
+from src.utils import atomic_write_json
 
 _memory_lock = threading.Lock()
 
@@ -52,10 +51,34 @@ class Fact:
 
 
 def _get_memory_file(email: str) -> Path:
-    """Get the memory file path for a user."""
+    """Get the memory file path for a user.
+
+    Sanitizes the email address to create a safe filename:
+    - Replaces @ with _at_
+    - Replaces . with _
+    - Replaces / and \\ with _ to prevent directory traversal
+    - Truncates/hashes very long emails to prevent OSError
+    """
+    import hashlib
+
     config = get_config()
-    # Sanitize email for filename
-    safe_email = email.replace("@", "_at_").replace(".", "_")
+    # Sanitize email for filename - handle path traversal characters
+    safe_email = (
+        email.replace("@", "_at_")
+        .replace(".", "_")
+        .replace("/", "_")
+        .replace("\\", "_")
+    )
+
+    # Handle very long email addresses (filesystem limit is typically 255 bytes)
+    # If the sanitized email is too long, hash it
+    max_length = 200  # Leave room for .json extension and safety margin
+    if len(safe_email) > max_length:
+        # Use hash of original email to maintain uniqueness
+        email_hash = hashlib.sha256(email.encode()).hexdigest()[:32]
+        # Keep a prefix for readability + hash for uniqueness
+        safe_email = f"{safe_email[:100]}_{email_hash}"
+
     return config.project_root / "memory" / f"{safe_email}.json"
 
 
@@ -66,33 +89,31 @@ def _load_user_memory(email: str) -> list[Fact]:
         return []
 
     try:
-        with open(memory_file, "r") as f:
+        with open(memory_file, "r", encoding="utf-8") as f:
             data = json.load(f)
+        # Validate that data is a list (not an object or other type)
+        if not isinstance(data, list):
+            print(f"Warning: Memory file for {email} contains non-list data, returning empty")
+            return []
         return [Fact.from_dict(item) for item in data]
-    except (json.JSONDecodeError, KeyError, UnicodeDecodeError):
+    except json.JSONDecodeError as e:
+        print(f"Warning: Memory file for {email} has invalid JSON: {e}")
+        return []
+    except (KeyError, TypeError) as e:
+        print(f"Warning: Memory file for {email} has invalid fact data: {e}")
+        return []
+    except UnicodeDecodeError as e:
+        print(f"Warning: Memory file for {email} has encoding issues: {e}")
+        return []
+    except OSError as e:
+        print(f"Warning: Cannot read memory file for {email}: {e}")
         return []
 
 
 def _save_user_memory(email: str, facts: list[Fact]) -> None:
     """Save all facts for a user atomically."""
     memory_file = _get_memory_file(email)
-    memory_file.parent.mkdir(parents=True, exist_ok=True)
-
-    # Write to temp file in same directory (ensures same filesystem for rename)
-    fd, tmp_path = tempfile.mkstemp(suffix=".tmp", dir=memory_file.parent)
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump([fact.to_dict() for fact in facts], f, indent=2)
-
-        # Atomic rename (POSIX guarantees this is atomic on same filesystem)
-        os.rename(tmp_path, str(memory_file))
-    except Exception:
-        # Clean up temp file on failure
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+    atomic_write_json([fact.to_dict() for fact in facts], memory_file)
 
 
 def add_fact(
@@ -101,6 +122,7 @@ def add_fact(
     category: str,
     source_context: str = "",
     keywords: list[str] | None = None,
+    allow_duplicate: bool = False,
 ) -> Fact:
     """Add a new fact to user's memory.
 
@@ -110,10 +132,18 @@ def add_fact(
         category: Category for organization (e.g., "pets", "locations", "preferences")
         source_context: Original message that led to this fact
         keywords: Search keywords for this fact
+        allow_duplicate: If False (default), skip adding if identical fact exists
 
     Returns:
-        The created Fact object
+        The created Fact object, or the existing Fact if duplicate found
+
+    Raises:
+        ValueError: If content is empty or whitespace-only
     """
+    # Validate content is not empty or whitespace-only
+    if not content or not content.strip():
+        raise ValueError("Fact content cannot be empty or whitespace-only")
+
     fact = Fact(
         id=f"fact_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
         content=content,
@@ -125,6 +155,17 @@ def add_fact(
 
     with _memory_lock:
         facts = _load_user_memory(email)
+
+        # Check for duplicate (same content and category)
+        if not allow_duplicate:
+            for existing in facts:
+                if (
+                    existing.content.strip().lower() == content.strip().lower()
+                    and existing.category.lower() == category.lower()
+                ):
+                    # Return the existing fact instead of creating duplicate
+                    return existing
+
         facts.append(fact)
         _save_user_memory(email, facts)
 
@@ -221,7 +262,14 @@ def update_fact(email: str, fact_id: str, content: str) -> bool:
 
     Returns:
         True if updated, False if not found
+
+    Raises:
+        ValueError: If content is empty or whitespace-only
     """
+    # Validate content is not empty or whitespace-only
+    if not content or not content.strip():
+        raise ValueError("Fact content cannot be empty or whitespace-only")
+
     with _memory_lock:
         facts = _load_user_memory(email)
         for fact in facts:

@@ -25,12 +25,20 @@ def send_email_response(
 
     Returns:
         Dictionary with send status.
+
+    Security: Validates reply_to against allowed_senders whitelist.
     """
     reply_to = get_reply_to()
     if not reply_to:
         return {"status": "error", "message": "Reply address not available"}
 
     config = get_config()
+
+    # Security: Validate recipient against allowed senders whitelist
+    allowed_senders_lower = {s.lower() for s in config.allowed_senders}
+    if reply_to.lower() not in allowed_senders_lower:
+        print(f"Security: Blocked email response to non-whitelisted recipient: {reply_to}")
+        return {"status": "error", "message": "Recipient not in allowed list"}
 
     try:
         # Generate HTML version
@@ -131,4 +139,58 @@ def get_user_identity() -> dict[str, Any]:
             "known": False,
             "email": email,
         }
+
+
+def lookup_recipient(name: str) -> dict[str, Any]:
+    """Look up a known recipient by name to get their email address.
+
+    Use this when the user wants to send an email to another person.
+    Only returns recipients who are in the allowed senders list.
+
+    Args:
+        name: Name or partial name to search for (case-insensitive)
+
+    Returns:
+        Dictionary with matching recipients and their email addresses.
+    """
+    from src.identities import IDENTITIES
+    from src.config import get_config
+
+    config = get_config()
+    name_lower = name.lower()
+
+    # Normalize allowed_senders to lowercase for case-insensitive comparison
+    allowed_senders_lower = {s.lower() for s in config.allowed_senders}
+
+    matches = []
+    for email, identity in IDENTITIES.items():
+        # Only include recipients who are in allowed_senders (case-insensitive)
+        if email.lower() not in allowed_senders_lower:
+            continue
+
+        # Match against name or short_name
+        if (
+            name_lower in identity.name.lower()
+            or name_lower in identity.short_name.lower()
+        ):
+            matches.append({
+                "email": identity.email,
+                "name": identity.name,
+                "short_name": identity.short_name,
+            })
+
+    if not matches:
+        return {
+            "status": "success",
+            "found": False,
+            "message": f"No known recipient found matching '{name}'. Only family members in the system can receive emails.",
+            "recipients": [],
+        }
+
+    return {
+        "status": "success",
+        "found": True,
+        "recipients": matches,
+        "count": len(matches),
+    }
 

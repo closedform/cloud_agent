@@ -63,9 +63,16 @@ def get_list_items(list_name: str) -> dict[str, Any]:
     if not email:
         return {"status": "error", "message": "User email not available"}
 
+    # Validate inputs
+    list_name = list_name.strip()
+    if not list_name:
+        return {"status": "error", "message": "List name cannot be empty"}
+
     config = get_config()
     items = get_list(email, list_name, config)
 
+    # Check if list exists (empty list returns [] which is same as non-existent)
+    # This is acceptable behavior - we return success with empty items
     return {
         "status": "success",
         "list_name": list_name,
@@ -87,6 +94,14 @@ def add_item_to_list(list_name: str, item: str) -> dict[str, Any]:
     email = get_user_email()
     if not email:
         return {"status": "error", "message": "User email not available"}
+
+    # Validate inputs
+    list_name = list_name.strip()
+    item = item.strip()
+    if not list_name:
+        return {"status": "error", "message": "List name cannot be empty"}
+    if not item:
+        return {"status": "error", "message": "Item cannot be empty"}
 
     config = get_config()
     count = add_to_list(email, list_name, item, config)
@@ -114,6 +129,14 @@ def remove_item_from_list(list_name: str, item: str) -> dict[str, Any]:
     if not email:
         return {"status": "error", "message": "User email not available"}
 
+    # Validate inputs
+    list_name = list_name.strip()
+    item = item.strip()
+    if not list_name:
+        return {"status": "error", "message": "List name cannot be empty"}
+    if not item:
+        return {"status": "error", "message": "Item cannot be empty"}
+
     config = get_config()
     removed = remove_from_list(email, list_name, item, config)
 
@@ -126,7 +149,7 @@ def remove_item_from_list(list_name: str, item: str) -> dict[str, Any]:
         }
     else:
         return {
-            "status": "not_found",
+            "status": "error",
             "message": f"'{item}' not found in {list_name}",
             "list_name": list_name,
             "item": item,
@@ -176,9 +199,23 @@ def add_todo_item(
     if not email:
         return {"status": "error", "message": "User email not available"}
 
+    # Validate inputs
+    text = text.strip()
+    if not text:
+        return {"status": "error", "message": "Todo text cannot be empty"}
+
+    # Validate reminder_days_before is non-negative if provided
+    if reminder_days_before is not None and reminder_days_before < 0:
+        return {"status": "error", "message": "Reminder days before must be non-negative"}
+
     reply_to = get_reply_to()
     config = get_config()
-    todo = add_todo(email, text, config, due_date, reminder_days_before)
+
+    # Create the todo - catch validation errors from user_data layer
+    try:
+        todo = add_todo(email, text, config, due_date, reminder_days_before)
+    except ValueError as e:
+        return {"status": "error", "message": str(e)}
 
     # Schedule reminder if due_date and reminder_days_before are provided
     reminder_scheduled = False
@@ -239,6 +276,11 @@ def complete_todo_item(text_or_id: str) -> dict[str, Any]:
     if not email:
         return {"status": "error", "message": "User email not available"}
 
+    # Validate inputs
+    text_or_id = text_or_id.strip()
+    if not text_or_id:
+        return {"status": "error", "message": "Todo text or ID cannot be empty"}
+
     config = get_config()
     completed = complete_todo_by_text(email, text_or_id, config)
 
@@ -250,7 +292,121 @@ def complete_todo_item(text_or_id: str) -> dict[str, Any]:
         }
     else:
         return {
-            "status": "not_found",
+            "status": "error",
             "message": f"No matching incomplete todo found for '{text_or_id}'",
         }
+
+
+def delete_todo_item(text_or_id: str) -> dict[str, Any]:
+    """Delete a todo item by matching text or ID.
+
+    Args:
+        text_or_id: Text to match (partial match) or todo ID.
+
+    Returns:
+        Dictionary with deletion status.
+    """
+    from src.user_data import delete_todo, get_todos as get_todos_raw
+
+    email = get_user_email()
+    if not email:
+        return {"status": "error", "message": "User email not available"}
+
+    # Validate inputs
+    text_or_id = text_or_id.strip()
+    if not text_or_id:
+        return {"status": "error", "message": "Todo text or ID cannot be empty"}
+
+    config = get_config()
+
+    # First try to find the todo by ID or text match
+    all_todos = get_todos_raw(email, config, include_done=True)
+    text_lower = text_or_id.lower()
+
+    matching_todo = None
+    for todo in all_todos:
+        # Match by ID first
+        if todo.get("id") == text_or_id:
+            matching_todo = todo
+            break
+        # Then try partial text match
+        if text_lower in todo.get("text", "").lower():
+            matching_todo = todo
+            break
+
+    if not matching_todo:
+        return {
+            "status": "error",
+            "message": f"No matching todo found for '{text_or_id}'",
+        }
+
+    # Delete the todo
+    deleted = delete_todo(email, matching_todo["id"], config)
+
+    if deleted:
+        return {
+            "status": "success",
+            "message": f"Deleted: {matching_todo['text']}",
+            "todo": matching_todo,
+        }
+    else:
+        return {
+            "status": "error",
+            "message": "Failed to delete todo",
+        }
+
+
+def clear_list(list_name: str) -> dict[str, Any]:
+    """Clear all items from a list (delete the list).
+
+    Args:
+        list_name: Name of the list to clear.
+
+    Returns:
+        Dictionary with status.
+    """
+    from src.user_data import (
+        load_user_data,
+        save_user_data,
+        _user_data_lock,
+    )
+
+    email = get_user_email()
+    if not email:
+        return {"status": "error", "message": "User email not available"}
+
+    # Validate inputs
+    list_name = list_name.strip()
+    if not list_name:
+        return {"status": "error", "message": "List name cannot be empty"}
+
+    config = get_config()
+
+    with _user_data_lock:
+        data = load_user_data(config)
+        if email not in data:
+            return {
+                "status": "error",
+                "message": f"List '{list_name}' not found",
+                "list_name": list_name,
+            }
+
+        lists = data[email].get("lists", {})
+        if list_name not in lists:
+            return {
+                "status": "error",
+                "message": f"List '{list_name}' not found",
+                "list_name": list_name,
+            }
+
+        item_count = len(lists[list_name])
+        del lists[list_name]
+        save_user_data(data, config)
+
+    return {
+        "status": "success",
+        "message": f"Cleared list '{list_name}' ({item_count} items removed)",
+        "list_name": list_name,
+        "items_removed": item_count,
+    }
 
