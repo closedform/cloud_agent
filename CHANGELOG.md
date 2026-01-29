@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agent task system** (`src/models/agent_task.py`): Agents can create tasks for system execution (e.g., sending emails to third parties). Includes recipient whitelist enforcement for security.
 - **Google ADK Multi-Agent Architecture**: Complete rewrite using Google Agent Development Kit
   - RouterAgent: Orchestrator that analyzes intent, delegates to specialists, sends email responses
   - CalendarAgent: Schedules events, queries calendar, lists calendars
@@ -28,6 +29,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Per-user data storage** (`src/user_data.py`): Persistent storage for lists and todos
 - **Agent tools** (`src/agents/tools/`): Domain-specific tools with thread-safe context helpers
 - **Test suite** (`tests/`): Comprehensive pytest tests with fixtures for all core components
+
+### Fixed
+
+- Consolidated atomic file writes in task_io module to prevent race conditions
+- Critical bug fixes from stress testing (session handling, file operations)
+- HTML detection and preservation in text_to_html conversion
+- Request context now uses shared dict instead of threading.local for reliability
+- Task processing only marks complete when email sent or response generated
+- Timezone-naive datetime usage corrected throughout codebase
+- ADK variable substitution errors in agent instructions
+- Sub-agent response handling that could break orchestration flow
+- Email fallback detection and research agent variable handling
+- API retry logic now catches google.genai.errors.ServerError
 
 ### Changed
 
